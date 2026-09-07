@@ -47,12 +47,31 @@ export type ProtocolEnvelope =
   | SnapshotEnvelope
   | ErrorEnvelope;
 
-const ENVELOPE_TYPES = new Set(['command', 'result', 'event', 'snapshot', 'error']);
-
 export function isProtocolEnvelope(value: unknown): value is ProtocolEnvelope {
   if (typeof value !== 'object' || value === null) return false;
   const candidate = value as Record<string, unknown>;
-  return candidate.protocol === PROTOCOL_VERSION
-    && typeof candidate.type === 'string'
-    && ENVELOPE_TYPES.has(candidate.type);
+  if (candidate.protocol !== PROTOCOL_VERSION) return false;
+
+  switch (candidate.type) {
+    case 'command':
+      return isNonEmptyString(candidate.id)
+        && isNonEmptyString(candidate.operation)
+        && (candidate.target === undefined || typeof candidate.target === 'string');
+    case 'result':
+      return isNonEmptyString(candidate.id) && candidate.success === true;
+    case 'event':
+      return isNonEmptyString(candidate.event);
+    case 'snapshot':
+      return Array.isArray(candidate.entities);
+    case 'error':
+      return (candidate.id === undefined || typeof candidate.id === 'string')
+        && isNonEmptyString(candidate.code)
+        && typeof candidate.message === 'string';
+    default:
+      return false;
+  }
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
 }

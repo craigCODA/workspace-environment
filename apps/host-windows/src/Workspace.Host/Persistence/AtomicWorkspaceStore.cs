@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Workspace.Host.Persistence;
 
-public sealed class AtomicWorkspaceStore
+public sealed class AtomicWorkspaceStore : IWorkspaceStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {

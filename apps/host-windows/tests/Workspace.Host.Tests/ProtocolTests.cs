@@ -27,6 +27,17 @@ public sealed class ProtocolTests : IDisposable
         Assert.Contains("protocol", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("http://127.0.0.1:5173", true)]
+    [InlineData("http://localhost:5173", true)]
+    [InlineData("https://example.com", false)]
+    [InlineData("null", false)]
+    public void BrowserOriginsMustResolveToLoopback(string? origin, bool expected)
+    {
+        Assert.Equal(expected, LoopbackOriginPolicy.IsTrusted(origin));
+    }
+
     [Fact]
     public async Task EveryCommandGetsOneCorrelatedResultOrError()
     {
@@ -115,6 +126,35 @@ public sealed class ProtocolTests : IDisposable
     }
 
     [Fact]
+    public async Task ConcurrentPresentationMutationsAreSerialized()
+    {
+        var original = WorkspaceEntity.CreateApplication("pc.application:notepad", "Notepad");
+        var store = new ConcurrentObservationWorkspaceStore(
+            new WorkspaceDocument(1, [original]));
+        var dispatcher = CreateDispatcher(store);
+
+        await Task.WhenAll(
+            dispatcher.DispatchAsync(
+                ProtocolEnvelope.Command(
+                    "move-a",
+                    "entity.setPresentation",
+                    original.Id,
+                    JsonSerializer.SerializeToElement(
+                        PresentationState.Default with { Position = new Vec3(1, 0, 0) })),
+                CancellationToken.None),
+            dispatcher.DispatchAsync(
+                ProtocolEnvelope.Command(
+                    "move-b",
+                    "entity.setPresentation",
+                    original.Id,
+                    JsonSerializer.SerializeToElement(
+                        PresentationState.Default with { Position = new Vec3(2, 0, 0) })),
+                CancellationToken.None));
+
+        Assert.Equal(1, store.MaximumConcurrentTransactions);
+    }
+
+    [Fact]
     public async Task WindowFocusUsesSemanticEntityIdentity()
     {
         var focus = new RecordingWindowFocusService();
@@ -172,6 +212,49 @@ public sealed class ProtocolTests : IDisposable
         Assert.Equal("unsupported_protocol", envelope.GetProperty("code").GetString());
     }
 
+    [Fact]
+    public async Task ServerRejectsBinaryMessagesWithProtocolErrorAndCleanClose()
+    {
+        var store = CreateStore();
+        var server = new WorkspaceProtocolServer(CreateDispatcher(store), store);
+        using var socket = new ScriptedWebSocket("not-json", WebSocketMessageType.Binary);
+
+        await server.RunConnectionAsync(socket, CancellationToken.None);
+
+        var message = Assert.Single(socket.SentMessages);
+        var envelope = JsonDocument.Parse(message).RootElement;
+        Assert.Equal("error", envelope.GetProperty("type").GetString());
+        Assert.Equal("invalid_message", envelope.GetProperty("code").GetString());
+        Assert.Equal(WebSocketState.Closed, socket.State);
+    }
+
+    [Fact]
+    public async Task ServerExplicitlyRejectsASecondConcurrentClient()
+    {
+        var store = CreateStore();
+        var server = new WorkspaceProtocolServer(CreateDispatcher(store), store);
+        var command = JsonSerializer.Serialize(
+            ProtocolEnvelope.Command("first-client", "application.list"),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        using var first = new ScriptedWebSocket(
+            command,
+            WebSocketMessageType.Text,
+            blockAfterMessage: true);
+        var firstConnection = server.RunConnectionAsync(first, CancellationToken.None);
+        await first.WaitingForNextReceive;
+
+        using var second = new ScriptedWebSocket(command);
+        await server.RunConnectionAsync(second, CancellationToken.None);
+
+        var rejection = Assert.Single(second.SentMessages);
+        var envelope = JsonDocument.Parse(rejection).RootElement;
+        Assert.Equal("connection_in_use", envelope.GetProperty("code").GetString());
+        Assert.Equal(WebSocketState.Closed, second.State);
+
+        first.ReleaseReceive();
+        await firstConnection;
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_tempDir))
@@ -184,7 +267,7 @@ public sealed class ProtocolTests : IDisposable
         new(Path.Combine(_tempDir, "workspace.json"));
 
     private CommandDispatcher CreateDispatcher(
-        AtomicWorkspaceStore? store = null,
+        IWorkspaceStore? store = null,
         IWindowFocusService? windowFocus = null)
     {
         var catalog = new InMemoryApplicationCatalog(
@@ -216,15 +299,81 @@ public sealed class ProtocolTests : IDisposable
         }
     }
 
-    private sealed class ScriptedWebSocket(string message) : WebSocket
+    private sealed class ConcurrentObservationWorkspaceStore(WorkspaceDocument document) : IWorkspaceStore
+    {
+        private WorkspaceDocument _document = document;
+        private int _activeTransactions;
+        private int _maximumConcurrentTransactions;
+
+        public int MaximumConcurrentTransactions => _maximumConcurrentTransactions;
+
+        public async Task<WorkspaceDocument> LoadAsync(CancellationToken cancellationToken)
+        {
+            var active = Interlocked.Increment(ref _activeTransactions);
+            InterlockedExtensions.Max(ref _maximumConcurrentTransactions, active);
+            await Task.Delay(25, cancellationToken);
+
+            lock (this)
+            {
+                return new WorkspaceDocument(_document.SchemaVersion, [.. _document.Entities]);
+            }
+        }
+
+        public async Task SaveAsync(WorkspaceDocument document, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await Task.Delay(25, cancellationToken);
+                lock (this)
+                {
+                    _document = document;
+                }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activeTransactions);
+            }
+        }
+    }
+
+    private static class InterlockedExtensions
+    {
+        public static void Max(ref int location, int value)
+        {
+            var current = Volatile.Read(ref location);
+            while (current < value)
+            {
+                var observed = Interlocked.CompareExchange(ref location, value, current);
+                if (observed == current)
+                {
+                    return;
+                }
+
+                current = observed;
+            }
+        }
+    }
+
+    private sealed class ScriptedWebSocket(
+        string message,
+        WebSocketMessageType messageType = WebSocketMessageType.Text,
+        bool blockAfterMessage = false) : WebSocket
     {
         private readonly byte[] _message = Encoding.UTF8.GetBytes(message);
         private bool _messageReceived;
         private WebSocketState _state = WebSocketState.Open;
         private WebSocketCloseStatus? _closeStatus;
         private string? _closeStatusDescription;
+        private readonly TaskCompletionSource _waitingForNextReceive = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseReceive = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
 
         public List<string> SentMessages { get; } = [];
+
+        public Task WaitingForNextReceive => _waitingForNextReceive.Task;
+
+        public void ReleaseReceive() => _releaseReceive.TrySetResult();
 
         public override WebSocketCloseStatus? CloseStatus => _closeStatus;
 
@@ -255,25 +404,31 @@ public sealed class ProtocolTests : IDisposable
 
         public override void Dispose() => _state = WebSocketState.Closed;
 
-        public override Task<WebSocketReceiveResult> ReceiveAsync(
+        public override async Task<WebSocketReceiveResult> ReceiveAsync(
             ArraySegment<byte> buffer,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (_messageReceived)
             {
-                return Task.FromResult(new WebSocketReceiveResult(
+                _waitingForNextReceive.TrySetResult();
+                if (blockAfterMessage)
+                {
+                    await _releaseReceive.Task.WaitAsync(cancellationToken);
+                }
+
+                return new WebSocketReceiveResult(
                     0,
                     WebSocketMessageType.Close,
-                    endOfMessage: true));
+                    endOfMessage: true);
             }
 
             _messageReceived = true;
             _message.AsSpan().CopyTo(buffer.AsSpan());
-            return Task.FromResult(new WebSocketReceiveResult(
+            return new WebSocketReceiveResult(
                 _message.Length,
-                WebSocketMessageType.Text,
-                endOfMessage: true));
+                messageType,
+                endOfMessage: true);
         }
 
         public override Task SendAsync(

@@ -8,8 +8,10 @@ class FakeSocket implements SocketLike {
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  sendError: Error | null = null;
 
   send(data: string): void {
+    if (this.sendError) throw this.sendError;
     this.sent.push(data);
   }
 
@@ -57,4 +59,30 @@ test('rejects a correlated host error exactly once', async () => {
   });
 
   await assert.rejects(pending, /Application was not found/);
+});
+
+test('rejects malformed protocol results instead of leaving commands pending', async () => {
+  const socket = new FakeSocket();
+  const workspace = new WorkspaceSocket(() => socket);
+  const pending = workspace.sendCommand('application.list');
+
+  socket.receive({ protocol: 1, type: 'result' });
+
+  await assert.rejects(
+    Promise.race([
+      pending,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('command remained pending')), 50)),
+    ]),
+    /invalid workspace protocol/i,
+  );
+});
+
+test('returns a rejected promise when the socket send throws', async () => {
+  const socket = new FakeSocket();
+  socket.sendError = new Error('send failed');
+  const workspace = new WorkspaceSocket(() => socket);
+
+  const pending = workspace.sendCommand('application.list');
+
+  await assert.rejects(pending, /send failed/);
 });

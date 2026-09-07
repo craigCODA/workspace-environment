@@ -52,9 +52,10 @@ static async Task HandleRequestAsync(
     CancellationToken cancellationToken)
 {
     if (!string.Equals(context.Request.Url?.AbsolutePath, workspacePath, StringComparison.Ordinal)
-        || !context.Request.IsWebSocketRequest)
+        || !context.Request.IsWebSocketRequest
+        || !LoopbackOriginPolicy.IsTrusted(context.Request.Headers["Origin"]))
     {
-        context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
+        context.Response.StatusCode = (int)HttpStatusCode.Forbidden;
         context.Response.Close();
         return;
     }

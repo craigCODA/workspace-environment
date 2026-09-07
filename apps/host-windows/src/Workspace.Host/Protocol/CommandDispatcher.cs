@@ -26,9 +26,11 @@ public sealed class UnavailableWindowFocusService : IWindowFocusService
 public sealed class CommandDispatcher(
     IApplicationCatalog applicationCatalog,
     ApplicationLauncher applicationLauncher,
-    AtomicWorkspaceStore workspaceStore,
+    IWorkspaceStore workspaceStore,
     IWindowFocusService windowFocusService)
 {
+    private readonly SemaphoreSlim _mutationGate = new(1, 1);
+
     public async Task<DispatchOutcome> DispatchAsync(
         ProtocolEnvelope command,
         CancellationToken cancellationToken)
@@ -106,6 +108,21 @@ public sealed class CommandDispatcher(
     }
 
     private async Task<DispatchOutcome> SetPresentationAsync(
+        ProtocolEnvelope command,
+        CancellationToken cancellationToken)
+    {
+        await _mutationGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await SetPresentationCoreAsync(command, cancellationToken);
+        }
+        finally
+        {
+            _mutationGate.Release();
+        }
+    }
+
+    private async Task<DispatchOutcome> SetPresentationCoreAsync(
         ProtocolEnvelope command,
         CancellationToken cancellationToken)
     {

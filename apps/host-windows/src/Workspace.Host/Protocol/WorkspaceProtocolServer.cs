@@ -8,72 +8,103 @@ namespace Workspace.Host.Protocol;
 
 public sealed class WorkspaceProtocolServer(
     CommandDispatcher dispatcher,
-    AtomicWorkspaceStore workspaceStore)
+    IWorkspaceStore workspaceStore)
 {
     private const int ReceiveBufferSize = 16 * 1024;
     private const int MaximumMessageSize = 1024 * 1024;
+    private readonly SemaphoreSlim _connectionGate = new(1, 1);
 
     public async Task RunConnectionAsync(WebSocket socket, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(socket);
-        var snapshotSent = false;
-
-        while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+        if (!await _connectionGate.WaitAsync(0, cancellationToken))
         {
-            var json = await ReceiveMessageAsync(socket, cancellationToken);
-            if (json is null)
-            {
-                return;
-            }
+            await FailConnectionAsync(
+                socket,
+                ProtocolEnvelope.Error(
+                    null,
+                    "connection_in_use",
+                    "Workspace Host V0 supports one spatial client at a time."),
+                WebSocketCloseStatus.PolicyViolation,
+                cancellationToken);
+            return;
+        }
 
-            ProtocolEnvelope command;
-            try
+        try
+        {
+            var snapshotSent = false;
+            while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
             {
-                command = ProtocolEnvelope.Parse(json);
-            }
-            catch (UnsupportedProtocolVersionException exception)
-            {
-                await SendAsync(
-                    socket,
-                    ProtocolEnvelope.Error(
-                        TryReadCorrelationId(json),
-                        "unsupported_protocol",
-                        exception.Message),
-                    cancellationToken);
-                await socket.CloseAsync(
-                    WebSocketCloseStatus.PolicyViolation,
-                    exception.Message,
-                    cancellationToken);
-                return;
-            }
-            catch (Exception exception) when (exception is JsonException or InvalidProtocolEnvelopeException)
-            {
-                await SendAsync(
-                    socket,
-                    ProtocolEnvelope.Error(
-                        TryReadCorrelationId(json),
-                        "invalid_envelope",
-                        exception.Message),
-                    cancellationToken);
-                continue;
-            }
+                string? json;
+                try
+                {
+                    json = await ReceiveMessageAsync(socket, cancellationToken);
+                }
+                catch (InvalidProtocolEnvelopeException exception)
+                {
+                    await FailConnectionAsync(
+                        socket,
+                        ProtocolEnvelope.Error(null, "invalid_message", exception.Message),
+                        WebSocketCloseStatus.InvalidMessageType,
+                        cancellationToken);
+                    return;
+                }
 
-            if (!snapshotSent)
-            {
-                var document = await workspaceStore.LoadAsync(cancellationToken);
-                await SendAsync(
-                    socket,
-                    ProtocolEnvelope.Snapshot(document.Entities),
-                    cancellationToken);
-                snapshotSent = true;
-            }
+                if (json is null)
+                {
+                    return;
+                }
 
-            var outcome = await dispatcher.DispatchAsync(command, cancellationToken);
-            await SendAsync(socket, outcome.Response, cancellationToken);
-            foreach (var eventEnvelope in outcome.Events)
-            {
-                await SendAsync(socket, eventEnvelope, cancellationToken);
+                ProtocolEnvelope command;
+                try
+                {
+                    command = ProtocolEnvelope.Parse(json);
+                }
+                catch (UnsupportedProtocolVersionException exception)
+                {
+                    await FailConnectionAsync(
+                        socket,
+                        ProtocolEnvelope.Error(
+                            TryReadCorrelationId(json),
+                            "unsupported_protocol",
+                            exception.Message),
+                        WebSocketCloseStatus.PolicyViolation,
+                        cancellationToken);
+                    return;
+                }
+                catch (Exception exception) when (exception is JsonException or InvalidProtocolEnvelopeException)
+                {
+                    await SendAsync(
+                        socket,
+                        ProtocolEnvelope.Error(
+                            TryReadCorrelationId(json),
+                            "invalid_envelope",
+                            exception.Message),
+                        cancellationToken);
+                    continue;
+                }
+
+                if (!snapshotSent)
+                {
+                    var document = await workspaceStore.LoadAsync(cancellationToken);
+                    await SendAsync(
+                        socket,
+                        ProtocolEnvelope.Snapshot(document.Entities),
+                        cancellationToken);
+                    snapshotSent = true;
+                }
+
+                var outcome = await dispatcher.DispatchAsync(command, cancellationToken);
+                await SendAsync(socket, outcome.Response, cancellationToken);
+                foreach (var eventEnvelope in outcome.Events)
+                {
+                    await SendAsync(socket, eventEnvelope, cancellationToken);
+                }
             }
+        }
+        finally
+        {
+            _connectionGate.Release();
         }
     }
 
@@ -128,6 +159,21 @@ public sealed class WorkspaceProtocolServer(
         var json = JsonSerializer.Serialize(envelope, ProtocolEnvelope.SerializerOptions);
         var bytes = Encoding.UTF8.GetBytes(json);
         await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+    }
+
+    private static async Task FailConnectionAsync(
+        WebSocket socket,
+        ProtocolEnvelope error,
+        WebSocketCloseStatus closeStatus,
+        CancellationToken cancellationToken)
+    {
+        if (socket.State != WebSocketState.Open)
+        {
+            return;
+        }
+
+        await SendAsync(socket, error, cancellationToken);
+        await socket.CloseOutputAsync(closeStatus, error.Message, cancellationToken);
     }
 
     private static string? TryReadCorrelationId(string json)

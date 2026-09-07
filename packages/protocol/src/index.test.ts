@@ -12,4 +12,7 @@ test('protocol envelopes require explicit protocol version 1', async () => {
   assert.equal(PROTOCOL_VERSION, 1);
   assert.equal(isProtocolEnvelope({ protocol: 1, type: 'event', event: 'ENTITY_CREATED', payload: {} }), true);
   assert.equal(isProtocolEnvelope({ type: 'event', event: 'ENTITY_CREATED', payload: {} }), false);
+  assert.equal(isProtocolEnvelope({ protocol: 1, type: 'result' }), false);
+  assert.equal(isProtocolEnvelope({ protocol: 1, type: 'snapshot' }), false);
+  assert.equal(isProtocolEnvelope({ protocol: 1, type: 'error', code: 'bad' }), false);
 });

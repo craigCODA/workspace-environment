@@ -57,7 +57,13 @@ export class WorkspaceSocket {
     const pending = new Promise<unknown>((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });
     });
-    this.#socket.send(JSON.stringify(command));
+    try {
+      this.#socket.send(JSON.stringify(command));
+    } catch (error) {
+      this.#pending.delete(id);
+      const failure = error instanceof Error ? error : new Error(String(error));
+      return Promise.reject(failure);
+    }
     return pending;
   }
 
