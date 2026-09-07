@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -18,11 +19,15 @@ public sealed class Win32WindowCatalog(Func<int, string> resolveApplicationId) :
     {
         var windows = new List<WindowSnapshot>();
 
-        EnumWindows((hwnd, _) =>
+        var enumerated = EnumWindows((hwnd, _) =>
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            GetWindowThreadProcessId(hwnd, out var processId);
+            if (GetWindowThreadProcessId(hwnd, out var processId) == 0)
+            {
+                return true;
+            }
+
             if (!GetWindowRect(hwnd, out var bounds))
             {
                 return true;
@@ -48,6 +53,13 @@ public sealed class Win32WindowCatalog(Func<int, string> resolveApplicationId) :
             return true;
         }, nint.Zero);
 
+        if (!enumerated)
+        {
+            throw new Win32Exception(
+                Marshal.GetLastWin32Error(),
+                "Unable to enumerate top-level Windows windows.");
+        }
+
         return windows;
     }
 
@@ -60,7 +72,7 @@ public sealed class Win32WindowCatalog(Func<int, string> resolveApplicationId) :
 
     private delegate bool EnumWindowsProc(nint hwnd, nint lParam);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError = true)]
     private static extern bool EnumWindows(EnumWindowsProc callback, nint lParam);
 
     [DllImport("user32.dll")]
