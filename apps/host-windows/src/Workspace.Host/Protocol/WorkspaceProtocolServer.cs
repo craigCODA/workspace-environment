@@ -173,7 +173,17 @@ public sealed class WorkspaceProtocolServer(
         }
 
         await SendAsync(socket, error, cancellationToken);
-        await socket.CloseOutputAsync(closeStatus, error.Message, cancellationToken);
+
+        using var closeTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        closeTimeout.CancelAfter(TimeSpan.FromSeconds(2));
+        try
+        {
+            await socket.CloseAsync(closeStatus, error.Message, closeTimeout.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            socket.Abort();
+        }
     }
 
     private static string? TryReadCorrelationId(string json)

@@ -226,6 +226,8 @@ public sealed class ProtocolTests : IDisposable
         Assert.Equal("error", envelope.GetProperty("type").GetString());
         Assert.Equal("invalid_message", envelope.GetProperty("code").GetString());
         Assert.Equal(WebSocketState.Closed, socket.State);
+        Assert.Equal(1, socket.CloseAsyncCalls);
+        Assert.Equal(0, socket.CloseOutputAsyncCalls);
     }
 
     [Fact]
@@ -373,6 +375,10 @@ public sealed class ProtocolTests : IDisposable
 
         public Task WaitingForNextReceive => _waitingForNextReceive.Task;
 
+        public int CloseAsyncCalls { get; private set; }
+
+        public int CloseOutputAsyncCalls { get; private set; }
+
         public void ReleaseReceive() => _releaseReceive.TrySetResult();
 
         public override WebSocketCloseStatus? CloseStatus => _closeStatus;
@@ -390,6 +396,7 @@ public sealed class ProtocolTests : IDisposable
             string? statusDescription,
             CancellationToken cancellationToken)
         {
+            CloseAsyncCalls++;
             _closeStatus = closeStatus;
             _closeStatusDescription = statusDescription;
             _state = WebSocketState.Closed;
@@ -399,8 +406,14 @@ public sealed class ProtocolTests : IDisposable
         public override Task CloseOutputAsync(
             WebSocketCloseStatus closeStatus,
             string? statusDescription,
-            CancellationToken cancellationToken) =>
-            CloseAsync(closeStatus, statusDescription, cancellationToken);
+            CancellationToken cancellationToken)
+        {
+            CloseOutputAsyncCalls++;
+            _closeStatus = closeStatus;
+            _closeStatusDescription = statusDescription;
+            _state = WebSocketState.Closed;
+            return Task.CompletedTask;
+        }
 
         public override void Dispose() => _state = WebSocketState.Closed;
 
