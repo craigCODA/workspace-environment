@@ -6,4 +6,4 @@ The canonical design is currently in:
 
 - `docs/superpowers/specs/2026-09-07-workspace-environment-design.md`
 
-Implementation has not started yet. The design is intentionally frozen first so the Windows host, spatial client, Quest path, and agent boundary do not collapse into one application.
+Implementation is underway on `feature/v0-real-app-surface` under the approved V0 implementation plan.
