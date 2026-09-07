@@ -1,0 +1,13 @@
+{
+  "name": "workspace-environment",
+  "private": true,
+  "workspaces": ["apps/spatial-client", "packages/*"],
+  "scripts": {
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

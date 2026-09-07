@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workspace-entity-v0",
+  "type": "object",
+  "required": ["id", "kind", "name", "properties", "relationships", "capabilities", "presentation"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "kind": { "type": "string", "minLength": 1 },
+    "name": { "type": "string" },
+    "properties": { "type": "object" },
+    "relationships": { "type": "array" },
+    "capabilities": { "type": "array", "items": { "type": "string" } },
+    "presentation": { "type": "object" }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workspace-protocol-envelope-v1",
+  "type": "object",
+  "required": ["protocol", "type"],
+  "properties": {
+    "protocol": { "const": 1 },
+    "type": { "enum": ["command", "result", "event", "snapshot", "error"] }
+  },
+  "additionalProperties": true
+}
