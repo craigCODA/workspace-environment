@@ -13,6 +13,7 @@ export interface SocketLike {
   onclose: (() => void) | null;
   onerror: (() => void) | null;
   send(data: string): void;
+  close(code?: number, reason?: string): void;
 }
 
 export type SocketFactory = (url: string) => SocketLike;
@@ -70,6 +71,11 @@ export class WorkspaceSocket {
   subscribe(listener: EnvelopeListener): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
+  }
+
+  close(): void {
+    this.#rejectAll(new Error('Workspace connection closed.'));
+    this.#socket.close(1000, 'Spatial client closed.');
   }
 
   #receive(raw: string): void {

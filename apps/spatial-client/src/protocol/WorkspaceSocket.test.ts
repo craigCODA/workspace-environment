@@ -9,6 +9,7 @@ class FakeSocket implements SocketLike {
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
   sendError: Error | null = null;
+  closeCalled = false;
 
   send(data: string): void {
     if (this.sendError) throw this.sendError;
@@ -17,6 +18,11 @@ class FakeSocket implements SocketLike {
 
   receive(message: unknown): void {
     this.onmessage?.({ data: JSON.stringify(message) });
+  }
+
+  close(): void {
+    this.closeCalled = true;
+    this.readyState = 3;
   }
 }
 
@@ -85,4 +91,13 @@ test('returns a rejected promise when the socket send throws', async () => {
   const pending = workspace.sendCommand('application.list');
 
   await assert.rejects(pending, /send failed/);
+});
+
+test('closes the underlying connection when the client is disposed', () => {
+  const socket = new FakeSocket();
+  const workspace = new WorkspaceSocket(() => socket);
+
+  workspace.close();
+
+  assert.equal(socket.closeCalled, true);
 });
