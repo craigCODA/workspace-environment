@@ -1,0 +1,15 @@
+{
+  "name": "@workspace/spatial-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test src/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@workspace/protocol": "*",
+    "@workspace/world-schema": "*"
+  }
+}
