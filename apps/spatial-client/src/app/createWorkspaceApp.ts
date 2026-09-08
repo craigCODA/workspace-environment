@@ -3,6 +3,7 @@ import { WorldReplica } from '../replica/WorldReplica.ts';
 import { SceneReplicaSynchronizer } from '../replica/SceneReplicaSynchronizer.ts';
 import { WorkspaceScene } from '../rendering/WorkspaceScene.ts';
 import { WelcomeSequence } from '../onboarding/WelcomeSequence.ts';
+import { ProtocolSurfaceStream } from '../surfaces/SurfaceStream.ts';
 
 export type WorkspaceApp = {
   destroy(): void;
@@ -27,9 +28,13 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   sceneRoot.setAttribute('aria-hidden', 'true');
   root.append(sceneRoot);
 
-  const scene = new WorkspaceScene(sceneRoot);
-  const replica = new WorldReplica();
   const socket = new WorkspaceSocket();
+  const scene = new WorkspaceScene(
+    sceneRoot,
+    undefined,
+    (entityId) => new ProtocolSurfaceStream(socket, entityId),
+  );
+  const replica = new WorldReplica();
   const synchronizer = new SceneReplicaSynchronizer(replica, scene);
 
   const unsubscribe = socket.subscribe((envelope) => synchronizer.apply(envelope));

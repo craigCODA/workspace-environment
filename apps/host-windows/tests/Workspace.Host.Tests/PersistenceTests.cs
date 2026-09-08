@@ -23,6 +23,21 @@ public sealed class PersistenceTests : IDisposable
         Assert.Equal(expected, await store.LoadAsync(CancellationToken.None));
     }
 
+    [Fact]
+    public async Task MissingStoresReturnIndependentEmptyDocuments()
+    {
+        var first = new AtomicWorkspaceStore(Path.Combine(_tempDir, "first.json"));
+        var second = new AtomicWorkspaceStore(Path.Combine(_tempDir, "second.json"));
+
+        var firstDocument = await first.LoadAsync(CancellationToken.None);
+        firstDocument.Entities.Add(
+            WorkspaceEntity.CreateApplication("pc.application:notepad", "Notepad"));
+
+        var secondDocument = await second.LoadAsync(CancellationToken.None);
+
+        Assert.Empty(secondDocument.Entities);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_tempDir))

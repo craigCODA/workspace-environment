@@ -2,6 +2,7 @@ using System.Text.Json;
 using Workspace.Host.Applications;
 using Workspace.Host.Domain;
 using Workspace.Host.Persistence;
+using Workspace.Host.Windows;
 
 namespace Workspace.Host.Protocol;
 
@@ -27,7 +28,9 @@ public sealed class CommandDispatcher(
     IApplicationCatalog applicationCatalog,
     ApplicationLauncher applicationLauncher,
     IWorkspaceStore workspaceStore,
-    IWindowFocusService windowFocusService)
+    IWindowFocusService windowFocusService,
+    IWindowCatalog? windowCatalog = null,
+    WindowReconciler? windowReconciler = null)
 {
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
 
@@ -52,6 +55,9 @@ public sealed class CommandDispatcher(
                 "application.launch" => await LaunchApplicationAsync(command, cancellationToken),
                 "entity.setPresentation" => await SetPresentationAsync(command, cancellationToken),
                 "window.focus" => await FocusWindowAsync(command, cancellationToken),
+                "surface.open" => await OpenSurfaceAsync(command, cancellationToken),
+                "surface.frame" => await ReadSurfaceFrameAsync(command, cancellationToken),
+                "surface.close" => await CloseSurfaceAsync(command, cancellationToken),
                 _ => Error(
                     command.Id,
                     "unsupported_operation",
@@ -100,11 +106,226 @@ public sealed class CommandDispatcher(
         }
 
         var launch = await applicationLauncher.LaunchAsync(application, cancellationToken);
-        var payload = new { applicationId = launch.ApplicationId };
+        var events = new List<ProtocolEnvelope>
+        {
+            ProtocolEnvelope.EventMessage(
+                "APPLICATION_LAUNCHED",
+                new { applicationId = launch.ApplicationId }),
+        };
+
+        string? windowEntityId = null;
+        var surfaceAvailable = false;
+        if (windowCatalog is not null && windowReconciler is not null)
+        {
+            var snapshot = await WaitForWindowAsync(
+                application.Id,
+                launch.ProcessId,
+                cancellationToken);
+            if (snapshot is not null)
+            {
+                windowEntityId = windowReconciler.ResolveEntityId(snapshot);
+                try
+                {
+                    await windowReconciler.TrackAsync(snapshot, cancellationToken);
+                    surfaceAvailable = true;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    events.Add(ProtocolEnvelope.EventMessage(
+                        "SURFACE_UNAVAILABLE",
+                        new { entityId = windowEntityId, message = exception.Message }));
+                }
+
+                events.AddRange(await PersistLaunchedWindowAsync(
+                    application,
+                    snapshot,
+                    windowEntityId,
+                    surfaceAvailable,
+                    cancellationToken));
+            }
+        }
+
+        var payload = new
+        {
+            applicationId = launch.ApplicationId,
+            windowEntityId,
+            surfaceAvailable,
+        };
 
         return new DispatchOutcome(
             ProtocolEnvelope.Result(command.Id!, payload),
-            [ProtocolEnvelope.EventMessage("APPLICATION_LAUNCHED", payload)]);
+            events);
+    }
+
+    private async Task<WindowSnapshot?> WaitForWindowAsync(
+        string applicationId,
+        int launchedProcessId,
+        CancellationToken cancellationToken)
+    {
+        const int maximumAttempts = 50;
+        for (var attempt = 0; attempt < maximumAttempts; attempt++)
+        {
+            var windows = await windowCatalog!.ListAsync(cancellationToken);
+            var snapshot = windows.FirstOrDefault(candidate =>
+                candidate.IsVisible
+                && !candidate.IsMinimized
+                && candidate.Bounds.Width > 0
+                && candidate.Bounds.Height > 0
+                && (candidate.ProcessId == launchedProcessId
+                    || string.Equals(
+                        candidate.ApplicationId,
+                        applicationId,
+                        StringComparison.OrdinalIgnoreCase)));
+            if (snapshot is not null)
+            {
+                return snapshot;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+        }
+
+        return null;
+    }
+
+    private async Task<IReadOnlyList<ProtocolEnvelope>> PersistLaunchedWindowAsync(
+        ApplicationDescriptor application,
+        WindowSnapshot snapshot,
+        string windowEntityId,
+        bool surfaceAvailable,
+        CancellationToken cancellationToken)
+    {
+        await _mutationGate.WaitAsync(cancellationToken);
+        try
+        {
+            var document = await workspaceStore.LoadAsync(cancellationToken);
+            var events = new List<ProtocolEnvelope>();
+
+            if (document.Entities.All(entity => entity.Id != application.Id))
+            {
+                var applicationEntity = WorkspaceEntity.CreateApplication(
+                    application.Id,
+                    application.DisplayName);
+                document.Entities.Add(applicationEntity);
+                events.Add(ProtocolEnvelope.EventMessage("ENTITY_CREATED", applicationEntity));
+            }
+
+            var candidate = WorkspaceEntity.CreateWindow(
+                windowEntityId,
+                string.IsNullOrWhiteSpace(snapshot.Title) ? application.DisplayName : snapshot.Title,
+                application.Id,
+                surfaceAvailable ? "available" : "unavailable");
+            var existingIndex = document.Entities.FindIndex(entity => entity.Id == windowEntityId);
+            var eventName = "ENTITY_CREATED";
+            if (existingIndex >= 0)
+            {
+                candidate = candidate with
+                {
+                    Presentation = document.Entities[existingIndex].Presentation,
+                };
+                document.Entities[existingIndex] = candidate;
+                eventName = "ENTITY_UPDATED";
+            }
+            else
+            {
+                document.Entities.Add(candidate);
+            }
+
+            await workspaceStore.SaveAsync(document, cancellationToken);
+            events.Add(ProtocolEnvelope.EventMessage(eventName, candidate));
+            return events;
+        }
+        finally
+        {
+            _mutationGate.Release();
+        }
+    }
+
+    private async Task<DispatchOutcome> OpenSurfaceAsync(
+        ProtocolEnvelope command,
+        CancellationToken cancellationToken)
+    {
+        if (windowReconciler is null)
+        {
+            return Error(command.Id, "capture_unavailable", "Window capture is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(command.Target))
+        {
+            return Error(command.Id, "invalid_target", "Opening a surface requires a window entity target.");
+        }
+
+        var handle = await windowReconciler.OpenSurfaceAsync(command.Target, cancellationToken);
+        return Result(command.Id!, handle);
+    }
+
+    private async Task<DispatchOutcome> ReadSurfaceFrameAsync(
+        ProtocolEnvelope command,
+        CancellationToken cancellationToken)
+    {
+        if (windowReconciler is null)
+        {
+            return Error(command.Id, "capture_unavailable", "Window capture is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(command.Target))
+        {
+            return Error(command.Id, "invalid_target", "Reading a surface requires a stream target.");
+        }
+
+        var afterSequence = -1L;
+        if (command.Payload is { ValueKind: JsonValueKind.Object } payload
+            && payload.TryGetProperty("afterSequence", out var sequenceElement)
+            && !sequenceElement.TryGetInt64(out afterSequence))
+        {
+            return Error(command.Id, "invalid_payload", "afterSequence must be an integer.");
+        }
+
+        if (!windowReconciler.ActiveCaptureStreams.Contains(command.Target, StringComparer.Ordinal))
+        {
+            return Result(command.Id!, new { available = false });
+        }
+
+        var frame = await windowReconciler.ReadLatestFrameAsync(
+            command.Target,
+            afterSequence,
+            cancellationToken);
+        if (frame is null)
+        {
+            return Result(command.Id!, new { available = true, frame = (object?)null });
+        }
+
+        return Result(command.Id!, new
+        {
+            available = true,
+            frame = new
+            {
+                frame.StreamId,
+                frame.Sequence,
+                frame.Width,
+                frame.Height,
+                frame.MimeType,
+                dataBase64 = Convert.ToBase64String(frame.Data),
+            },
+        });
+    }
+
+    private async Task<DispatchOutcome> CloseSurfaceAsync(
+        ProtocolEnvelope command,
+        CancellationToken cancellationToken)
+    {
+        if (windowReconciler is null)
+        {
+            return Error(command.Id, "capture_unavailable", "Window capture is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(command.Target))
+        {
+            return Error(command.Id, "invalid_target", "Closing a surface requires a stream target.");
+        }
+
+        await windowReconciler.CloseSurfaceAsync(command.Target, cancellationToken);
+        return Result(command.Id!, new { streamId = command.Target });
     }
 
     private async Task<DispatchOutcome> SetPresentationAsync(

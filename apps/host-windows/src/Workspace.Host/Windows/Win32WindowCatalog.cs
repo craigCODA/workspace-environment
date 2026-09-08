@@ -4,7 +4,7 @@ using System.Text;
 
 namespace Workspace.Host.Windows;
 
-public sealed class Win32WindowCatalog(Func<int, string> resolveApplicationId) : IWindowCatalog
+public sealed class Win32WindowCatalog(Func<int, string?> resolveApplicationId) : IWindowCatalog
 {
     public Task<IReadOnlyList<WindowSnapshot>> ListAsync(CancellationToken cancellationToken)
     {
@@ -14,7 +14,7 @@ public sealed class Win32WindowCatalog(Func<int, string> resolveApplicationId) :
     }
 
     private static IReadOnlyList<WindowSnapshot> Discover(
-        Func<int, string> resolveApplicationId,
+        Func<int, string?> resolveApplicationId,
         CancellationToken cancellationToken)
     {
         var windows = new List<WindowSnapshot>();
@@ -35,7 +35,10 @@ public sealed class Win32WindowCatalog(Func<int, string> resolveApplicationId) :
 
             var title = GetWindowTitle(hwnd);
             var applicationId = resolveApplicationId((int)processId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(applicationId);
+            if (string.IsNullOrWhiteSpace(applicationId))
+            {
+                return true;
+            }
 
             windows.Add(new WindowSnapshot(
                 hwnd,

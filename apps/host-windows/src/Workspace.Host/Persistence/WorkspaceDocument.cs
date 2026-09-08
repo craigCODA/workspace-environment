@@ -16,7 +16,7 @@ public sealed class WorkspaceDocument : IEquatable<WorkspaceDocument>
 
     public List<WorkspaceEntity> Entities { get; init; }
 
-    public static WorkspaceDocument Empty { get; } = new(1, []);
+    public static WorkspaceDocument Empty => new(1, []);
 
     public bool Equals(WorkspaceDocument? other)
     {

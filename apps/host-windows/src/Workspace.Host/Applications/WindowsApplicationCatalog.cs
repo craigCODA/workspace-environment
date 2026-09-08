@@ -123,7 +123,7 @@ public sealed class WindowsApplicationCatalog : IApplicationCatalog
         return Path.GetFileNameWithoutExtension(executablePath);
     }
 
-    private static string CreateStableId(string executablePath)
+    public static string CreateStableId(string executablePath)
     {
         var canonical = executablePath.Replace('/', '\\').ToUpperInvariant();
         var digest = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));

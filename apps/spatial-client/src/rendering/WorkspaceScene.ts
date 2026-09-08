@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import type { WorkspaceEntity } from '@workspace/world-schema';
 import { RendererRegistry } from './RendererRegistry.ts';
+import type { SurfaceStream } from '../surfaces/SurfaceStream.ts';
+import { ApplicationSurface, ThreeSurfaceTextureTarget } from '../surfaces/ApplicationSurface.ts';
 
 type Point = Readonly<{ x: number; y: number; z: number }>;
 
@@ -35,13 +37,19 @@ export class WorkspaceScene {
   readonly #camera = new THREE.PerspectiveCamera(52, 1, 0.05, 160);
   readonly #renderer: THREE.WebGLRenderer;
   readonly #registry: RendererRegistry;
+  readonly #surfaceStreamFactory: ((entityId: string) => SurfaceStream) | null;
   readonly #entities = new Map<string, THREE.Object3D>();
   readonly #resizeObserver: ResizeObserver;
   #yaw = 0;
   #pitch = 0;
 
-  constructor(root: HTMLElement, registry = new RendererRegistry()) {
+  constructor(
+    root: HTMLElement,
+    registry = new RendererRegistry(),
+    surfaceStreamFactory: ((entityId: string) => SurfaceStream) | null = null,
+  ) {
     this.#registry = registry;
+    this.#surfaceStreamFactory = surfaceStreamFactory;
     this.#scene.background = new THREE.Color(PALETTE.foundryBlue);
     this.#scene.fog = new THREE.Fog(PALETTE.distanceFog, 18, 74);
 
@@ -99,11 +107,20 @@ export class WorkspaceScene {
     if (!object) return;
 
     this.#scene.remove(object);
+    const applicationSurface = object.userData.applicationSurface;
+    if (applicationSurface instanceof ApplicationSurface) {
+      void applicationSurface.dispose().catch(() => {
+        // Scene teardown must remain safe if the host connection has already closed.
+      });
+    }
     object.traverse((child) => {
       if (!(child instanceof THREE.Mesh)) return;
       child.geometry.dispose();
       const materials = Array.isArray(child.material) ? child.material : [child.material];
-      for (const material of materials) material.dispose();
+      for (const material of materials) {
+        if ('map' in material && material.map instanceof THREE.Texture) material.map.dispose();
+        material.dispose();
+      }
     });
     this.#entities.delete(entityId);
   }
@@ -214,6 +231,17 @@ export class WorkspaceScene {
   #createEntityObject(entity: WorkspaceEntity): THREE.Object3D {
     const descriptor = this.#registry.resolve(entity.kind);
     if (descriptor.kind === 'application-surface') {
+      if (this.#surfaceStreamFactory) {
+        const textureTarget = new ThreeSurfaceTextureTarget();
+        const surface = new ApplicationSurface(
+          this.#surfaceStreamFactory(entity.id),
+          textureTarget,
+        );
+        textureTarget.object.userData.applicationSurface = surface;
+        surface.start();
+        return textureTarget.object;
+      }
+
       return new THREE.Mesh(
         new THREE.BoxGeometry(1.6, 0.95, 0.035),
         new THREE.MeshStandardMaterial({

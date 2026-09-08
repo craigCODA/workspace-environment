@@ -5,6 +5,7 @@ using Workspace.Host.Applications;
 using Workspace.Host.Domain;
 using Workspace.Host.Persistence;
 using Workspace.Host.Protocol;
+using Workspace.Host.Windows;
 
 namespace Workspace.Host.Tests;
 
@@ -169,6 +170,74 @@ public sealed class ProtocolTests : IDisposable
     }
 
     [Fact]
+    public async Task LaunchCreatesDurableWindowEntityWithoutPersistingRuntimeStreamId()
+    {
+        var store = CreateStore();
+        var capture = new FrameWindowCapture();
+        await using var reconciler = new WindowReconciler(capture);
+        var dispatcher = CreateSurfaceDispatcher(store, reconciler);
+
+        var outcome = await dispatcher.DispatchAsync(
+            ProtocolEnvelope.Command("launch-window", "application.launch", "Notepad"),
+            CancellationToken.None);
+
+        var created = Assert.Single(outcome.Events, envelope =>
+            envelope.Event == "ENTITY_CREATED"
+            && envelope.Payload!.Value.GetProperty("id").GetString()
+                == "pc.window:pc.application:notepad");
+        Assert.Equal(EntityKinds.Window, created.Payload!.Value.GetProperty("kind").GetString());
+        Assert.Equal(
+            "pc.window:pc.application:notepad",
+            created.Payload!.Value.GetProperty("id").GetString());
+
+        var persisted = await store.LoadAsync(CancellationToken.None);
+        Assert.Contains(persisted.Entities, entity => entity.Id == "pc.application:notepad");
+        Assert.Contains(persisted.Entities, entity => entity.Id == "pc.window:pc.application:notepad");
+        var json = JsonSerializer.Serialize(persisted, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.DoesNotContain("surface-runtime", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("424242", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SurfaceCommandsReturnFramesThroughTransientStreamIdentity()
+    {
+        var store = CreateStore();
+        var capture = new FrameWindowCapture();
+        await using var reconciler = new WindowReconciler(capture);
+        var dispatcher = CreateSurfaceDispatcher(store, reconciler);
+        await dispatcher.DispatchAsync(
+            ProtocolEnvelope.Command("launch-window", "application.launch", "Notepad"),
+            CancellationToken.None);
+
+        var opened = await dispatcher.DispatchAsync(
+            ProtocolEnvelope.Command(
+                "open-surface",
+                "surface.open",
+                "pc.window:pc.application:notepad"),
+            CancellationToken.None);
+        var streamId = opened.Response.Payload!.Value.GetProperty("streamId").GetString();
+        Assert.Equal("surface-runtime-1", streamId);
+
+        var framed = await dispatcher.DispatchAsync(
+            ProtocolEnvelope.Command(
+                "read-frame",
+                "surface.frame",
+                streamId,
+                JsonSerializer.SerializeToElement(new { afterSequence = -1 })),
+            CancellationToken.None);
+        var framePayload = framed.Response.Payload!.Value;
+        Assert.True(framePayload.GetProperty("available").GetBoolean());
+        Assert.Equal(
+            Convert.ToBase64String([1, 2, 3, 4]),
+            framePayload.GetProperty("frame").GetProperty("dataBase64").GetString());
+
+        await dispatcher.DispatchAsync(
+            ProtocolEnvelope.Command("close-surface", "surface.close", streamId),
+            CancellationToken.None);
+        Assert.Empty(capture.ActiveStreamIds);
+    }
+
+    [Fact]
     public async Task ServerSendsSnapshotOnlyAfterSupportedVersionIsReceived()
     {
         var store = CreateStore();
@@ -284,6 +353,35 @@ public sealed class ProtocolTests : IDisposable
             windowFocus ?? new RecordingWindowFocusService());
     }
 
+    private CommandDispatcher CreateSurfaceDispatcher(
+        IWorkspaceStore store,
+        WindowReconciler reconciler)
+    {
+        var catalog = new InMemoryApplicationCatalog(
+        [
+            new ApplicationDescriptor("pc.application:notepad", "Notepad", @"C:\Windows\notepad.exe", null),
+        ]);
+        IWindowCatalog windows = new FixedWindowCatalog(
+        [
+            new WindowSnapshot(
+                (nint)424242,
+                4242,
+                "Untitled - Notepad",
+                new WindowBounds(10, 20, 800, 600),
+                true,
+                false,
+                "pc.application:notepad"),
+        ]);
+
+        return new CommandDispatcher(
+            catalog,
+            new ApplicationLauncher(new FixedProcessLauncher(4242)),
+            store,
+            new RecordingWindowFocusService(),
+            windows,
+            reconciler);
+    }
+
     private sealed class FixedProcessLauncher(int processId) : IProcessLauncher
     {
         public Task<int> LaunchAsync(string executablePath, string? arguments, CancellationToken cancellationToken) =>
@@ -298,6 +396,56 @@ public sealed class ProtocolTests : IDisposable
         {
             LastEntityId = entityId;
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FixedWindowCatalog(IReadOnlyList<WindowSnapshot> windows) : IWindowCatalog
+    {
+        public Task<IReadOnlyList<WindowSnapshot>> ListAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(windows);
+        }
+    }
+
+    private sealed class FrameWindowCapture : IWindowCapture
+    {
+        private readonly HashSet<string> _active = [];
+        private int _nextStreamId;
+
+        public IReadOnlyCollection<string> ActiveStreamIds => _active;
+
+        public Task<SurfaceStreamHandle> StartAsync(nint hwnd, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var handle = new SurfaceStreamHandle($"surface-runtime-{++_nextStreamId}", 800, 600);
+            _active.Add(handle.StreamId);
+            return Task.FromResult(handle);
+        }
+
+        public ValueTask<SurfaceFrame?> ReadLatestFrameAsync(
+            string streamId,
+            long afterSequence,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            SurfaceFrame? frame = _active.Contains(streamId) && afterSequence < 1
+                ? new SurfaceFrame(streamId, 1, 800, 600, "image/png", [1, 2, 3, 4])
+                : null;
+            return ValueTask.FromResult(frame);
+        }
+
+        public Task StopAsync(string streamId, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _active.Remove(streamId);
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            _active.Clear();
+            return ValueTask.CompletedTask;
         }
     }
 
