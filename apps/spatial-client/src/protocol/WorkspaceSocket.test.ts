@@ -6,6 +6,7 @@ class FakeSocket implements SocketLike {
   readonly sent: string[] = [];
   readyState = 1;
   onmessage: ((event: { data: string }) => void) | null = null;
+  onopen: (() => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
   sendError: Error | null = null;
@@ -23,6 +24,11 @@ class FakeSocket implements SocketLike {
   close(): void {
     this.closeCalled = true;
     this.readyState = 3;
+  }
+
+  open(): void {
+    this.readyState = 1;
+    this.onopen?.();
   }
 }
 
@@ -100,4 +106,15 @@ test('closes the underlying connection when the client is disposed', () => {
   workspace.close();
 
   assert.equal(socket.closeCalled, true);
+});
+
+test('exposes connection readiness for automatic initial synchronization', async () => {
+  const socket = new FakeSocket();
+  socket.readyState = 0;
+  const workspace = new WorkspaceSocket(() => socket);
+  const ready = workspace.waitUntilOpen();
+
+  socket.open();
+
+  await ready;
 });

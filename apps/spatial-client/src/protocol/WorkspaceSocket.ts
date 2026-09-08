@@ -9,6 +9,7 @@ export const WORKSPACE_ENDPOINT = 'ws://127.0.0.1:41771/workspace';
 
 export interface SocketLike {
   readonly readyState: number;
+  onopen: (() => void) | null;
   onmessage: ((event: { data: string }) => void) | null;
   onclose: (() => void) | null;
   onerror: (() => void) | null;
@@ -26,6 +27,7 @@ type PendingCommand = {
 
 export class WorkspaceSocket {
   readonly #socket: SocketLike;
+  readonly #openPromise: Promise<void>;
   readonly #pending = new Map<string, PendingCommand>();
   readonly #listeners = new Set<EnvelopeListener>();
   #nextId = 1;
@@ -35,9 +37,37 @@ export class WorkspaceSocket {
     endpoint = WORKSPACE_ENDPOINT,
   ) {
     this.#socket = socketFactory(endpoint);
+    let rejectOpening: (error: Error) => void = () => {};
+    this.#openPromise = this.#socket.readyState === 1
+      ? Promise.resolve()
+      : new Promise<void>((resolve, reject) => {
+        let settled = false;
+        this.#socket.onopen = () => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
+        rejectOpening = (error) => {
+          if (settled) return;
+          settled = true;
+          reject(error);
+        };
+      });
     this.#socket.onmessage = (event) => this.#receive(event.data);
-    this.#socket.onclose = () => this.#rejectAll(new Error('Workspace connection closed.'));
-    this.#socket.onerror = () => this.#rejectAll(new Error('Workspace connection failed.'));
+    this.#socket.onclose = () => {
+      const error = new Error('Workspace connection closed.');
+      rejectOpening(error);
+      this.#rejectAll(error);
+    };
+    this.#socket.onerror = () => {
+      const error = new Error('Workspace connection failed.');
+      rejectOpening(error);
+      this.#rejectAll(error);
+    };
+  }
+
+  waitUntilOpen(): Promise<void> {
+    return this.#openPromise;
   }
 
   sendCommand(operation: string, target?: string, payload?: unknown): Promise<unknown> {

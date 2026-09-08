@@ -1,6 +1,6 @@
-import type { ProtocolEnvelope } from '@workspace/protocol';
 import { WorkspaceSocket } from '../protocol/WorkspaceSocket.ts';
 import { WorldReplica } from '../replica/WorldReplica.ts';
+import { SceneReplicaSynchronizer } from '../replica/SceneReplicaSynchronizer.ts';
 import { WorkspaceScene } from '../rendering/WorkspaceScene.ts';
 import { WelcomeSequence } from '../onboarding/WelcomeSequence.ts';
 
@@ -8,7 +8,16 @@ export type WorkspaceApp = {
   destroy(): void;
 };
 
+type InitialSyncSocket = Pick<WorkspaceSocket, 'waitUntilOpen' | 'sendCommand'>;
+
+export async function initializeWorkspaceConnection(socket: InitialSyncSocket): Promise<void> {
+  await socket.waitUntilOpen();
+  await socket.sendCommand('application.list');
+}
+
 export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
+  const originalClassName = root.className;
+  const originalTabIndex = root.getAttribute('tabindex');
   root.replaceChildren();
   root.className = 'workspace-root workspace-arrival';
   root.tabIndex = 0;
@@ -21,33 +30,19 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   const scene = new WorkspaceScene(sceneRoot);
   const replica = new WorldReplica();
   const socket = new WorkspaceSocket();
-  const renderedIds = new Set<string>();
+  const synchronizer = new SceneReplicaSynchronizer(replica, scene);
 
-  const syncScene = (): void => {
-    const currentIds = new Set(replica.entities.map((entity) => entity.id));
-    for (const entityId of renderedIds) {
-      if (!currentIds.has(entityId)) {
-        scene.remove(entityId);
-        renderedIds.delete(entityId);
-      }
-    }
-
-    for (const entity of replica.entities) {
-      scene.upsert(entity);
-      renderedIds.add(entity.id);
-    }
-  };
-
-  const unsubscribe = socket.subscribe((envelope: ProtocolEnvelope) => {
-    if (envelope.type !== 'snapshot' && envelope.type !== 'event') return;
-    replica.apply(envelope);
-    syncScene();
-  });
+  const unsubscribe = socket.subscribe((envelope) => synchronizer.apply(envelope));
 
   const welcome = new WelcomeSequence(root, {
     onOpenApplication: async (displayName) => {
       await socket.sendCommand('application.launch', displayName);
     },
+  });
+
+  void initializeWorkspaceConnection(socket).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    welcome.setStatus(`Windows Workspace Host is not connected. ${message}`, 'error');
   });
 
   const reticle = document.createElement('div');
@@ -129,6 +124,12 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       root.removeEventListener('pointercancel', endLook);
       root.removeEventListener('keydown', onKeyDown);
       root.replaceChildren();
+      root.className = originalClassName;
+      if (originalTabIndex === null) {
+        root.removeAttribute('tabindex');
+      } else {
+        root.setAttribute('tabindex', originalTabIndex);
+      }
     },
   };
 }
