@@ -73,6 +73,10 @@ public sealed class CommandDispatcher(
         {
             throw;
         }
+        catch (InputTargetNotPermittedException exception)
+        {
+            return Error(command.Id, "INPUT_TARGET_NOT_PERMITTED", exception.Message);
+        }
         catch (Exception exception)
         {
             return Error(command.Id, "operation_failed", exception.Message);

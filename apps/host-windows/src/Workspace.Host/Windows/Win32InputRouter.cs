@@ -58,6 +58,7 @@ public sealed class Win32InputRouter : IInputRouter
 
     private readonly Dictionary<(nint Hwnd, string Button), PointerSession> _pointerSessions = [];
     private readonly object _pointerGate = new();
+    private readonly HeldKeyTracker _heldKeys = new();
 
     public async Task RouteAsync(
         WindowSnapshot window,
@@ -98,6 +99,12 @@ public sealed class Win32InputRouter : IInputRouter
 
     public async Task ReleaseAllAsync(CancellationToken cancellationToken)
     {
+        foreach (var virtualKey in _heldKeys.DrainHeldKeys())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            TryReleaseKey(virtualKey);
+        }
+
         KeyValuePair<(nint Hwnd, string Button), PointerSession>[] sessions;
         lock (_pointerGate)
         {
@@ -303,11 +310,15 @@ public sealed class Win32InputRouter : IInputRouter
         }
     }
 
-    private static InputDispatch RouteKey(nint hwnd, WindowInputIntent intent)
+    private InputDispatch RouteKey(nint hwnd, WindowInputIntent intent)
     {
         var virtualKey = ResolveVirtualKey(intent.Key!);
-        var flags = intent.Phase == "up" ? KeyUp : 0;
-        Send(hwnd, [KeyboardInput(virtualKey, 0, flags)]);
+        var keyUp = intent.Phase == "up";
+        _heldKeys.Route(
+            virtualKey,
+            keyUp,
+            () => Send(hwnd, [KeyboardInput(virtualKey, 0, keyUp ? KeyUp : 0)]),
+            () => TryReleaseKey(virtualKey));
         return InputDispatch.Default;
     }
 
@@ -486,6 +497,12 @@ public sealed class Win32InputRouter : IInputRouter
     private static void TryReleaseButton(uint flags)
     {
         var input = new[] { MouseInput(flags) };
+        SendInput(1, input, Marshal.SizeOf<NativeInput>());
+    }
+
+    private static void TryReleaseKey(ushort virtualKey)
+    {
+        var input = new[] { KeyboardInput(virtualKey, 0, KeyUp) };
         SendInput(1, input, Marshal.SizeOf<NativeInput>());
     }
 

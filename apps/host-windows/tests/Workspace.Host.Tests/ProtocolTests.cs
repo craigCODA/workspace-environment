@@ -194,6 +194,19 @@ public sealed class ProtocolTests : IDisposable
     }
 
     [Fact]
+    public async Task WindowFocusBlockedByWindowsReturnsExplicitProtocolError()
+    {
+        var dispatcher = CreateDispatcher(windowFocus: new RejectedWindowFocusService());
+
+        var outcome = await dispatcher.DispatchAsync(
+            ProtocolEnvelope.Command("focus-blocked", "window.focus", "pc.window:pc.application:notepad"),
+            CancellationToken.None);
+
+        Assert.Equal("error", outcome.Response.Type);
+        Assert.Equal("INPUT_TARGET_NOT_PERMITTED", outcome.Response.Code);
+    }
+
+    [Fact]
     public async Task LaunchCreatesDurableWindowEntityWithoutPersistingRuntimeStreamId()
     {
         var store = CreateStore();
@@ -525,6 +538,12 @@ public sealed class ProtocolTests : IDisposable
             LastEntityId = entityId;
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class RejectedWindowFocusService : IWindowFocusService
+    {
+        public Task FocusAsync(string entityId, CancellationToken cancellationToken) =>
+            throw new InputTargetNotPermittedException("Windows rejected focus.");
     }
 
     private sealed class FixedWindowCatalog(IReadOnlyList<WindowSnapshot> windows) : IWindowCatalog

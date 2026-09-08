@@ -35,14 +35,15 @@ catch (Exception exception)
 }
 
 await using var windowReconciler = new WindowReconciler(windowCapture);
+var inputRouter = new Win32InputRouter();
 var dispatcher = new CommandDispatcher(
     applicationCatalog,
     new ApplicationLauncher(new SystemProcessLauncher()),
     store,
-    new UnavailableWindowFocusService(),
+    new Win32WindowFocusService(windowCatalog, windowReconciler),
     windowCatalog,
     windowReconciler,
-    new Win32InputRouter());
+    inputRouter);
 var protocolServer = new WorkspaceProtocolServer(dispatcher, store);
 
 using var shutdown = new CancellationTokenSource();

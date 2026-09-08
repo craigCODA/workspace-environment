@@ -28,7 +28,7 @@ The automated suites cover:
 - persist-before-`PRESENTATION_UPDATED` ordering;
 - live frame stream ownership and unavailable-window recovery;
 - normalized pointer, wheel, key, and text intents;
-- input release on disconnect/window loss and exact permission errors;
+- pointer/key release on disconnect, bounded input leases after window loss, and exact permission errors;
 - local presentation preview, failed-write rollback, and serialized repeated edits;
 - the sparse Three.js environment and first-run orientation geometry.
 
