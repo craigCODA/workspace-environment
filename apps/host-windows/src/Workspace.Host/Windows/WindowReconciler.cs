@@ -89,7 +89,7 @@ public sealed class WindowReconciler : IAsyncDisposable
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            foreach (var (entityId, previousRuntime) in _runtime.ToArray())
+            foreach (var entityId in _runtime.Keys.ToArray())
             {
                 if (!observed.TryGetValue(entityId, out var snapshot))
                 {
@@ -98,9 +98,16 @@ public sealed class WindowReconciler : IAsyncDisposable
                         await _capture.StopAsync(missingBinding.Stream.StreamId, cancellationToken);
                     }
                     _runtime.Remove(entityId);
+                }
+            }
+
+            foreach (var (entityId, snapshot) in observed)
+            {
+                if (!_runtime.TryGetValue(entityId, out var previousRuntime))
+                {
+                    _runtime[entityId] = snapshot;
                     continue;
                 }
-
                 _runtime[entityId] = snapshot;
                 if (!_tracked.TryGetValue(entityId, out var binding)) continue;
                 if (snapshot.Hwnd == previousRuntime.Hwnd)

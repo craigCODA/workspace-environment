@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { PresentationState } from '@workspace/world-schema';
 import {
   ProtocolWindowInputSink,
   ProtocolSurfaceStream,
@@ -7,6 +8,7 @@ import {
 } from './SurfaceStream.ts';
 import {
   ApplicationSurface,
+  ProtocolPresentationSink,
   ThreeSurfaceTextureTarget,
   type SurfaceTextureTarget,
 } from './ApplicationSurface.ts';
@@ -165,6 +167,158 @@ test('application surface geometry lets persistent presentation own its displaye
   assert.equal(target.object.geometry.parameters.height, 1);
 
   target.dispose();
+});
+
+test('presentation sink sends the complete presentation through semantic identity', async () => {
+  const commands: Array<{ operation: string; target?: string; payload?: unknown }> = [];
+  const presentation: PresentationState = {
+    position: { x: 3, y: 1.5, z: -2 },
+    rotation: { x: 0, y: 0, z: 0, w: 1 },
+    size: { x: 4.2, y: 2.4, z: 1 },
+    representation: 'application-surface',
+  };
+  const sink = new ProtocolPresentationSink({
+    async sendCommand(operation, target, payload): Promise<unknown> {
+      commands.push({ operation, target, payload });
+      return {};
+    },
+  }, 'pc.window:pc.application:test');
+
+  await sink.setPresentation(presentation);
+
+  assert.deepEqual(commands, [{
+    operation: 'entity.setPresentation',
+    target: 'pc.window:pc.application:test',
+    payload: presentation,
+  }]);
+});
+
+test('failed presentation persistence reverts the local surface preview', async () => {
+  const initial: PresentationState = {
+    position: { x: 0, y: 1.4, z: -3 },
+    rotation: { x: 0, y: 0, z: 0, w: 1 },
+    size: { x: 3.2, y: 1.8, z: 1 },
+    representation: 'application-surface',
+  };
+  const moved: PresentationState = {
+    ...initial,
+    position: { x: 2, y: 2.2, z: -3 },
+    size: { x: 4, y: 2.25, z: 1 },
+  };
+  const applied: PresentationState[] = [];
+  const stream = {
+    async open(): Promise<void> {},
+    async readFrame(): Promise<null> { return null; },
+    async close(): Promise<void> {},
+  };
+  const target: SurfaceTextureTarget = {
+    update() {},
+    markUnavailable() {},
+    setPresentation(presentation) { applied.push(presentation); },
+    dispose() {},
+  };
+  const surface = new ApplicationSurface(stream, target, {
+    initialPresentation: initial,
+    presentationSink: {
+      async setPresentation(): Promise<never> {
+        throw new Error('persistence failed');
+      },
+    },
+  });
+
+  await assert.rejects(surface.commitPresentation(moved), /persistence failed/);
+
+  assert.deepEqual(applied, [initial, moved, initial]);
+  assert.deepEqual(surface.presentation, initial);
+});
+
+test('successful presentation preview waits for the authoritative host event', async () => {
+  const initial: PresentationState = {
+    position: { x: 0, y: 1.4, z: -3 },
+    rotation: { x: 0, y: 0, z: 0, w: 1 },
+    size: { x: 3.2, y: 1.8, z: 1 },
+    representation: 'application-surface',
+  };
+  const resized: PresentationState = {
+    ...initial,
+    size: { x: 4.5, y: 2.5, z: 1 },
+  };
+  const committed: PresentationState[] = [];
+  const surface = new ApplicationSurface(
+    {
+      async open(): Promise<void> {},
+      async readFrame(): Promise<null> { return null; },
+      async close(): Promise<void> {},
+    },
+    {
+      update() {},
+      markUnavailable() {},
+      setPresentation() {},
+      dispose() {},
+    },
+    {
+      initialPresentation: initial,
+      presentationSink: {
+        async setPresentation(presentation): Promise<void> {
+          committed.push(presentation);
+        },
+      },
+    },
+  );
+
+  await surface.commitPresentation(resized);
+
+  assert.deepEqual(committed, [resized]);
+  assert.deepEqual(surface.presentation, initial);
+  surface.acceptAuthoritativePresentation(resized);
+  assert.deepEqual(surface.presentation, resized);
+});
+
+test('a second presentation edit accumulates from the pending displayed preview', async () => {
+  const initial: PresentationState = {
+    position: { x: 0, y: 1.4, z: -3 },
+    rotation: { x: 0, y: 0, z: 0, w: 1 },
+    size: { x: 3.2, y: 1.8, z: 1 },
+    representation: 'application-surface',
+  };
+  const committed: PresentationState[] = [];
+  const surface = new ApplicationSurface(
+    {
+      async open(): Promise<void> {},
+      async readFrame(): Promise<null> { return null; },
+      async close(): Promise<void> {},
+    },
+    {
+      update() {},
+      markUnavailable() {},
+      setPresentation() {},
+      dispose() {},
+    },
+    {
+      initialPresentation: initial,
+      presentationSink: {
+        async setPresentation(presentation): Promise<void> {
+          committed.push(presentation);
+        },
+      },
+    },
+  );
+
+  const first = {
+    ...surface.displayedPresentation,
+    position: { ...surface.displayedPresentation.position, x: 0.2 },
+  };
+  const firstCommit = surface.commitPresentation(first);
+  const second = {
+    ...surface.displayedPresentation,
+    position: { ...surface.displayedPresentation.position, x: 0.4 },
+  };
+  const secondCommit = surface.commitPresentation(second);
+  await Promise.all([firstCommit, secondCommit]);
+
+  assert.deepEqual(committed, [first, second]);
+  assert.deepEqual(surface.presentation, initial);
+  assert.deepEqual(surface.displayedPresentation, second);
 });
 
 test('surface stream distinguishes no new frame from an unavailable capture', async () => {

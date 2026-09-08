@@ -2,7 +2,11 @@ import * as THREE from 'three';
 import type { WorkspaceEntity } from '@workspace/world-schema';
 import { RendererRegistry } from './RendererRegistry.ts';
 import type { SurfaceStream, WindowInputSink } from '../surfaces/SurfaceStream.ts';
-import { ApplicationSurface, ThreeSurfaceTextureTarget } from '../surfaces/ApplicationSurface.ts';
+import {
+  ApplicationSurface,
+  ThreeSurfaceTextureTarget,
+  type PresentationSink,
+} from '../surfaces/ApplicationSurface.ts';
 
 type Point = Readonly<{ x: number; y: number; z: number }>;
 
@@ -45,6 +49,7 @@ export class WorkspaceScene {
   readonly #registry: RendererRegistry;
   readonly #surfaceStreamFactory: ((entityId: string) => SurfaceStream) | null;
   readonly #inputSinkFactory: ((entityId: string) => WindowInputSink) | null;
+  readonly #presentationSinkFactory: ((entityId: string) => PresentationSink) | null;
   readonly #raycaster = new THREE.Raycaster();
   readonly #entities = new Map<string, THREE.Object3D>();
   readonly #resizeObserver: ResizeObserver;
@@ -56,10 +61,12 @@ export class WorkspaceScene {
     registry = new RendererRegistry(),
     surfaceStreamFactory: ((entityId: string) => SurfaceStream) | null = null,
     inputSinkFactory: ((entityId: string) => WindowInputSink) | null = null,
+    presentationSinkFactory: ((entityId: string) => PresentationSink) | null = null,
   ) {
     this.#registry = registry;
     this.#surfaceStreamFactory = surfaceStreamFactory;
     this.#inputSinkFactory = inputSinkFactory;
+    this.#presentationSinkFactory = presentationSinkFactory;
     this.#scene.background = new THREE.Color(PALETTE.foundryBlue);
     this.#scene.fog = new THREE.Fog(PALETTE.distanceFog, 18, 74);
 
@@ -105,10 +112,15 @@ export class WorkspaceScene {
       this.#scene.add(object);
     }
 
-    const { position, rotation, size } = entity.presentation;
-    object.position.set(position.x, position.y, position.z);
-    object.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
-    object.scale.set(size.x, size.y, size.z);
+    const applicationSurface = object.userData.applicationSurface;
+    if (applicationSurface instanceof ApplicationSurface) {
+      applicationSurface.acceptAuthoritativePresentation(entity.presentation);
+    } else {
+      const { position, rotation, size } = entity.presentation;
+      object.position.set(position.x, position.y, position.z);
+      object.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+      object.scale.set(size.x, size.y, size.z);
+    }
     object.visible = true;
   }
 
@@ -280,6 +292,8 @@ export class WorkspaceScene {
           textureTarget,
           {
             inputSink: this.#inputSinkFactory?.(entity.id),
+            initialPresentation: entity.presentation,
+            presentationSink: this.#presentationSinkFactory?.(entity.id),
           },
         );
         textureTarget.object.userData.applicationSurface = surface;

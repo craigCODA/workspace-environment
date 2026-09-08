@@ -1,9 +1,11 @@
 import * as THREE from 'three';
+import type { PresentationState } from '@workspace/world-schema';
 import type {
   KeyPhase,
   PointerButton,
   PointerPhase,
   SurfaceFrame,
+  SurfaceCommandClient,
   SurfaceStream,
   WindowInputSink,
 } from './SurfaceStream.ts';
@@ -11,13 +13,34 @@ import type {
 export interface SurfaceTextureTarget {
   update(frame: SurfaceFrame): Promise<void> | void;
   markUnavailable(): void;
+  setPresentation?(presentation: PresentationState): void;
   dispose(): void;
+}
+
+export interface PresentationSink {
+  setPresentation(presentation: PresentationState): Promise<unknown>;
+}
+
+export class ProtocolPresentationSink implements PresentationSink {
+  readonly #client: SurfaceCommandClient;
+  readonly #entityId: string;
+
+  constructor(client: SurfaceCommandClient, entityId: string) {
+    this.#client = client;
+    this.#entityId = entityId;
+  }
+
+  setPresentation(presentation: PresentationState): Promise<unknown> {
+    return this.#client.sendCommand('entity.setPresentation', this.#entityId, presentation);
+  }
 }
 
 export type ApplicationSurfaceOptions = {
   frameIntervalMs?: number;
   retryIntervalMs?: number;
   inputSink?: WindowInputSink;
+  initialPresentation?: PresentationState;
+  presentationSink?: PresentationSink;
 };
 
 export class ThreeSurfaceTextureTarget implements SurfaceTextureTarget {
@@ -67,6 +90,13 @@ export class ThreeSurfaceTextureTarget implements SurfaceTextureTarget {
     this.object.material.needsUpdate = true;
   }
 
+  setPresentation(presentation: PresentationState): void {
+    const { position, rotation, size } = presentation;
+    this.object.position.set(position.x, position.y, position.z);
+    this.object.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+    this.object.scale.set(size.x, size.y, size.z);
+  }
+
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
@@ -87,6 +117,11 @@ export class ApplicationSurface {
   readonly #frameIntervalMs: number;
   readonly #retryIntervalMs: number;
   readonly #inputSink: WindowInputSink | null;
+  readonly #presentationSink: PresentationSink | null;
+  #presentation: PresentationState | null;
+  #displayedPresentation: PresentationState | null;
+  #pendingPresentationCount = 0;
+  #presentationQueue: Promise<void> = Promise.resolve();
   #opened = false;
   #disposed = false;
   #timer: ReturnType<typeof setTimeout> | null = null;
@@ -101,6 +136,24 @@ export class ApplicationSurface {
     this.#frameIntervalMs = options.frameIntervalMs ?? 80;
     this.#retryIntervalMs = options.retryIntervalMs ?? 1_000;
     this.#inputSink = options.inputSink ?? null;
+    this.#presentationSink = options.presentationSink ?? null;
+    this.#presentation = options.initialPresentation ?? null;
+    this.#displayedPresentation = this.#presentation;
+    if (this.#displayedPresentation) {
+      this.#textureTarget.setPresentation?.(this.#displayedPresentation);
+    }
+  }
+
+  get presentation(): PresentationState {
+    if (!this.#presentation) throw new Error('Presentation is not configured for this surface.');
+    return this.#presentation;
+  }
+
+  get displayedPresentation(): PresentationState {
+    if (!this.#displayedPresentation) {
+      throw new Error('Presentation is not configured for this surface.');
+    }
+    return this.#displayedPresentation;
   }
 
   async renderNextFrame(): Promise<boolean> {
@@ -162,6 +215,41 @@ export class ApplicationSurface {
 
   text(value: string): Promise<unknown> {
     return this.#requireInput().text(value);
+  }
+
+  previewPresentation(presentation: PresentationState): void {
+    this.#displayedPresentation = presentation;
+    this.#textureTarget.setPresentation?.(presentation);
+  }
+
+  acceptAuthoritativePresentation(presentation: PresentationState): void {
+    this.#presentation = presentation;
+    if (this.#pendingPresentationCount === 0) this.previewPresentation(presentation);
+  }
+
+  async commitPresentation(presentation: PresentationState): Promise<unknown> {
+    if (!this.#presentationSink || !this.#presentation) {
+      throw new Error('Presentation persistence is not configured for this surface.');
+    }
+
+    const sink = this.#presentationSink;
+    this.#pendingPresentationCount += 1;
+    this.previewPresentation(presentation);
+    const operation = this.#presentationQueue.then(async () => {
+      try {
+        const result = await sink.setPresentation(presentation);
+        this.#pendingPresentationCount -= 1;
+        return result;
+      } catch (error) {
+        this.#pendingPresentationCount -= 1;
+        if (this.#pendingPresentationCount === 0 && this.#presentation) {
+          this.previewPresentation(this.#presentation);
+        }
+        throw error;
+      }
+    });
+    this.#presentationQueue = operation.then(() => undefined, () => undefined);
+    return operation;
   }
 
   async dispose(): Promise<void> {

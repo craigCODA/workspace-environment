@@ -371,24 +371,16 @@ public sealed class CommandDispatcher(
             return Error(command.Id, "invalid_payload", "Presentation payload is invalid.");
         }
 
-        if (presentation is null)
+        if (presentation is null || !IsValidPresentation(presentation))
         {
             return Error(command.Id, "invalid_payload", "Presentation payload is invalid.");
         }
 
         var document = await workspaceStore.LoadAsync(cancellationToken);
-        var entityIndex = document.Entities.FindIndex(entity =>
-            string.Equals(entity.Id, command.Target, StringComparison.Ordinal));
-
-        if (entityIndex < 0)
+        if (!document.TrySetPresentation(command.Target, presentation, out _))
         {
             return Error(command.Id, "entity_not_found", $"Entity '{command.Target}' was not found.");
         }
-
-        document.Entities[entityIndex] = document.Entities[entityIndex] with
-        {
-            Presentation = presentation,
-        };
 
         await workspaceStore.SaveAsync(document, cancellationToken);
 
@@ -489,6 +481,29 @@ public sealed class CommandDispatcher(
                 && intent.Text.Length <= WindowInputLimits.MaximumTextLength,
             _ => false,
         };
+    }
+
+    private static bool IsValidPresentation(PresentationState presentation)
+    {
+        static bool FiniteVector(Vec3 value) =>
+            double.IsFinite(value.X) && double.IsFinite(value.Y) && double.IsFinite(value.Z);
+        static bool FiniteQuaternion(Quaternion value) =>
+            double.IsFinite(value.X)
+            && double.IsFinite(value.Y)
+            && double.IsFinite(value.Z)
+            && double.IsFinite(value.W);
+
+        var rotationLengthSquared = presentation.Rotation.X * presentation.Rotation.X
+            + presentation.Rotation.Y * presentation.Rotation.Y
+            + presentation.Rotation.Z * presentation.Rotation.Z
+            + presentation.Rotation.W * presentation.Rotation.W;
+        return FiniteVector(presentation.Position)
+            && FiniteVector(presentation.Size)
+            && presentation.Size.X > 0
+            && presentation.Size.Y > 0
+            && presentation.Size.Z > 0
+            && FiniteQuaternion(presentation.Rotation)
+            && rotationLengthSquared > 1e-12;
     }
 
     private static string? GetRequestedApplication(ProtocolEnvelope command)

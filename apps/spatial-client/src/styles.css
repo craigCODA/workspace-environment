@@ -49,6 +49,10 @@ button {
   cursor: default;
 }
 
+.workspace-root.is-presentation-drag {
+  cursor: move;
+}
+
 .scene-root,
 .workspace-canvas {
   position: absolute;

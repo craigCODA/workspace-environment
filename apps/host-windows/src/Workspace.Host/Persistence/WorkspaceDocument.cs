@@ -18,6 +18,27 @@ public sealed class WorkspaceDocument : IEquatable<WorkspaceDocument>
 
     public static WorkspaceDocument Empty => new(1, []);
 
+    public bool TrySetPresentation(
+        string entityId,
+        PresentationState presentation,
+        out WorkspaceEntity? updated)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(entityId);
+        ArgumentNullException.ThrowIfNull(presentation);
+
+        var index = Entities.FindIndex(entity =>
+            string.Equals(entity.Id, entityId, StringComparison.Ordinal));
+        if (index < 0)
+        {
+            updated = null;
+            return false;
+        }
+
+        updated = Entities[index] with { Presentation = presentation };
+        Entities[index] = updated;
+        return true;
+    }
+
     public bool Equals(WorkspaceDocument? other)
     {
         if (other is null)

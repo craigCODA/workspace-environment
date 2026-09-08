@@ -127,6 +127,30 @@ public sealed class ProtocolTests : IDisposable
     }
 
     [Fact]
+    public async Task InvalidPresentationIsRejectedWithoutChangingDurableState()
+    {
+        var store = CreateStore();
+        var original = WorkspaceEntity.CreateApplication("pc.application:notepad", "Notepad");
+        await store.SaveAsync(new WorkspaceDocument(1, [original]), CancellationToken.None);
+        var dispatcher = CreateDispatcher(store);
+        var invalid = PresentationState.Default with { Size = new Vec3(0, 1, 1) };
+
+        var outcome = await dispatcher.DispatchAsync(
+            ProtocolEnvelope.Command(
+                "invalid-presentation",
+                "entity.setPresentation",
+                original.Id,
+                JsonSerializer.SerializeToElement(invalid)),
+            CancellationToken.None);
+
+        var persisted = await store.LoadAsync(CancellationToken.None);
+        Assert.Equal("error", outcome.Response.Type);
+        Assert.Equal("invalid_payload", outcome.Response.Code);
+        Assert.Equal(original.Presentation, Assert.Single(persisted.Entities).Presentation);
+        Assert.Empty(outcome.Events);
+    }
+
+    [Fact]
     public async Task ConcurrentPresentationMutationsAreSerialized()
     {
         var original = WorkspaceEntity.CreateApplication("pc.application:notepad", "Notepad");
