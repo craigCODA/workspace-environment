@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  ProtocolWindowInputSink,
   ProtocolSurfaceStream,
   type SurfaceFrame,
 } from './SurfaceStream.ts';
@@ -45,6 +46,87 @@ test('surface stream uses runtime stream ids without exposing Windows capture de
     { operation: 'surface.close', target: frame.streamId, payload: undefined },
   ]);
   assert.equal(JSON.stringify(commands).includes('HWND'), false);
+});
+
+test('surface input converts Three.js UV coordinates into normalized Windows intents', async () => {
+  const commands: Array<{ operation: string; target?: string; payload?: unknown }> = [];
+  const socket = {
+    async sendCommand(operation: string, target?: string, payload?: unknown): Promise<unknown> {
+      commands.push({ operation, target, payload });
+      return {};
+    },
+  };
+  const sink = new ProtocolWindowInputSink(socket, 'pc.window:pc.application:test');
+
+  await sink.pointer('down', 0.25, 0.75, 'primary');
+  await sink.wheel(0.5, 0.25, 0, 120);
+  await sink.key('down', 'Enter');
+  await sink.text('hello');
+
+  assert.deepEqual(commands, [
+    {
+      operation: 'window.input',
+      target: 'pc.window:pc.application:test',
+      payload: { kind: 'pointer', phase: 'down', x: 0.25, y: 0.25, button: 'primary' },
+    },
+    {
+      operation: 'window.input',
+      target: 'pc.window:pc.application:test',
+      payload: { kind: 'wheel', x: 0.5, y: 0.75, deltaX: 0, deltaY: 120 },
+    },
+    {
+      operation: 'window.input',
+      target: 'pc.window:pc.application:test',
+      payload: { kind: 'key', phase: 'down', key: 'Enter' },
+    },
+    {
+      operation: 'window.input',
+      target: 'pc.window:pc.application:test',
+      payload: { kind: 'text', text: 'hello' },
+    },
+  ]);
+});
+
+test('surface input preserves ordering while coalescing queued pointer moves', async () => {
+  const commands: Array<{ operation: string; target?: string; payload?: unknown }> = [];
+  const releases: Array<(value: unknown) => void> = [];
+  const socket = {
+    sendCommand(operation: string, target?: string, payload?: unknown): Promise<unknown> {
+      commands.push({ operation, target, payload });
+      return new Promise((resolve) => releases.push(resolve));
+    },
+  };
+  const sink = new ProtocolWindowInputSink(socket, 'pc.window:pc.application:test');
+
+  const down = sink.pointer('down', 0.1, 0.9, 'primary');
+  await new Promise((resolve) => setImmediate(resolve));
+  const firstMove = sink.pointer('move', 0.2, 0.8);
+  const latestMove = sink.pointer('move', 0.25, 0.75);
+  const up = sink.pointer('up', 0.25, 0.75, 'primary');
+
+  assert.equal(commands.length, 1);
+  releases.shift()?.({});
+  await down;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(commands[1]?.payload, {
+    kind: 'pointer',
+    phase: 'move',
+    x: 0.25,
+    y: 0.25,
+  });
+
+  releases.shift()?.({});
+  await Promise.all([firstMove, latestMove]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(commands[2]?.payload, {
+    kind: 'pointer',
+    phase: 'up',
+    x: 0.25,
+    y: 0.25,
+    button: 'primary',
+  });
+  releases.shift()?.({});
+  await up;
 });
 
 test('application surface forwards changing frames to its texture target', async () => {

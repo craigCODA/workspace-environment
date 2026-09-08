@@ -238,6 +238,89 @@ public sealed class ProtocolTests : IDisposable
     }
 
     [Fact]
+    public async Task WindowInputResolvesTheCurrentRuntimeWindowBySemanticIdentity()
+    {
+        var store = CreateStore();
+        var capture = new FrameWindowCapture();
+        var input = new RecordingInputRouter();
+        await using var reconciler = new WindowReconciler(capture);
+        var dispatcher = CreateSurfaceDispatcher(store, reconciler, input);
+
+        var outcome = await dispatcher.DispatchAsync(
+            ProtocolEnvelope.Command(
+                "input-window",
+                "window.input",
+                "pc.window:pc.application:notepad",
+                JsonSerializer.SerializeToElement(new
+                {
+                    kind = "pointer",
+                    phase = "down",
+                    x = 0.5,
+                    y = 0.5,
+                    button = "primary",
+                })),
+            CancellationToken.None);
+
+        Assert.Equal("result", outcome.Response.Type);
+        Assert.Equal((nint)424242, input.LastWindow?.Hwnd);
+        Assert.Equal(new WindowBounds(10, 20, 800, 600), input.LastWindow?.Bounds);
+        Assert.Equal("pointer", input.LastIntent?.Kind);
+        Assert.Equal(0.5, input.LastIntent?.X);
+        Assert.Equal(0.5, input.LastIntent?.Y);
+    }
+
+    [Fact]
+    public async Task InputBlockedByWindowsIntegrityReturnsExplicitProtocolError()
+    {
+        var store = CreateStore();
+        var capture = new FrameWindowCapture();
+        var input = new RecordingInputRouter(reject: true);
+        await using var reconciler = new WindowReconciler(capture);
+        var dispatcher = CreateSurfaceDispatcher(store, reconciler, input);
+
+        var outcome = await dispatcher.DispatchAsync(
+            ProtocolEnvelope.Command(
+                "input-blocked",
+                "window.input",
+                "pc.window:pc.application:notepad",
+                JsonSerializer.SerializeToElement(new
+                {
+                    kind = "text",
+                    text = "blocked",
+                })),
+            CancellationToken.None);
+
+        Assert.Equal("error", outcome.Response.Type);
+        Assert.Equal("INPUT_TARGET_NOT_PERMITTED", outcome.Response.Code);
+    }
+
+    [Fact]
+    public async Task WindowInputRejectsOversizedTextBeforeNativeDispatch()
+    {
+        var store = CreateStore();
+        var capture = new FrameWindowCapture();
+        var input = new RecordingInputRouter();
+        await using var reconciler = new WindowReconciler(capture);
+        var dispatcher = CreateSurfaceDispatcher(store, reconciler, input);
+
+        var outcome = await dispatcher.DispatchAsync(
+            ProtocolEnvelope.Command(
+                "input-too-large",
+                "window.input",
+                "pc.window:pc.application:notepad",
+                JsonSerializer.SerializeToElement(new
+                {
+                    kind = "text",
+                    text = new string('x', WindowInputLimits.MaximumTextLength + 1),
+                })),
+            CancellationToken.None);
+
+        Assert.Equal("error", outcome.Response.Type);
+        Assert.Equal("invalid_payload", outcome.Response.Code);
+        Assert.Null(input.LastIntent);
+    }
+
+    [Fact]
     public async Task ServerSendsSnapshotOnlyAfterSupportedVersionIsReceived()
     {
         var store = CreateStore();
@@ -262,6 +345,25 @@ public sealed class ProtocolTests : IDisposable
                 Assert.Equal("list-through-server", envelope.GetProperty("id").GetString());
             });
         Assert.Equal(WebSocketState.Closed, socket.State);
+    }
+
+    [Fact]
+    public async Task ServerReleasesHeldInputWhenTheSpatialClientDisconnects()
+    {
+        var store = CreateStore();
+        var capture = new FrameWindowCapture();
+        var input = new RecordingInputRouter();
+        await using var reconciler = new WindowReconciler(capture);
+        var dispatcher = CreateSurfaceDispatcher(store, reconciler, input);
+        var server = new WorkspaceProtocolServer(dispatcher, store);
+        var command = JsonSerializer.Serialize(
+            ProtocolEnvelope.Command("list-before-close", "application.list"),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        using var socket = new ScriptedWebSocket(command);
+
+        await server.RunConnectionAsync(socket, CancellationToken.None);
+
+        Assert.Equal(1, input.ReleaseCalls);
     }
 
     [Fact]
@@ -355,7 +457,8 @@ public sealed class ProtocolTests : IDisposable
 
     private CommandDispatcher CreateSurfaceDispatcher(
         IWorkspaceStore store,
-        WindowReconciler reconciler)
+        WindowReconciler reconciler,
+        IInputRouter? inputRouter = null)
     {
         var catalog = new InMemoryApplicationCatalog(
         [
@@ -379,7 +482,8 @@ public sealed class ProtocolTests : IDisposable
             store,
             new RecordingWindowFocusService(),
             windows,
-            reconciler);
+            reconciler,
+            inputRouter);
     }
 
     private sealed class FixedProcessLauncher(int processId) : IProcessLauncher
@@ -446,6 +550,37 @@ public sealed class ProtocolTests : IDisposable
         {
             _active.Clear();
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingInputRouter(bool reject = false) : IInputRouter
+    {
+        public WindowSnapshot? LastWindow { get; private set; }
+
+        public WindowInputIntent? LastIntent { get; private set; }
+
+        public int ReleaseCalls { get; private set; }
+
+        public Task RouteAsync(
+            WindowSnapshot window,
+            WindowInputIntent intent,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (reject)
+            {
+                throw new InputTargetNotPermittedException("Blocked by Windows integrity level.");
+            }
+            LastWindow = window;
+            LastIntent = intent;
+            return Task.CompletedTask;
+        }
+
+        public Task ReleaseAllAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ReleaseCalls++;
+            return Task.CompletedTask;
         }
     }
 

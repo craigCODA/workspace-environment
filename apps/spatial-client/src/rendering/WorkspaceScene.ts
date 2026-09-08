@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { WorkspaceEntity } from '@workspace/world-schema';
 import { RendererRegistry } from './RendererRegistry.ts';
-import type { SurfaceStream } from '../surfaces/SurfaceStream.ts';
+import type { SurfaceStream, WindowInputSink } from '../surfaces/SurfaceStream.ts';
 import { ApplicationSurface, ThreeSurfaceTextureTarget } from '../surfaces/ApplicationSurface.ts';
 
 type Point = Readonly<{ x: number; y: number; z: number }>;
@@ -32,12 +32,20 @@ export function calculatePlanarMovement(
   };
 }
 
+export type ApplicationSurfaceHit = Readonly<{
+  surface: ApplicationSurface;
+  u: number;
+  v: number;
+}>;
+
 export class WorkspaceScene {
   readonly #scene = new THREE.Scene();
   readonly #camera = new THREE.PerspectiveCamera(52, 1, 0.05, 160);
   readonly #renderer: THREE.WebGLRenderer;
   readonly #registry: RendererRegistry;
   readonly #surfaceStreamFactory: ((entityId: string) => SurfaceStream) | null;
+  readonly #inputSinkFactory: ((entityId: string) => WindowInputSink) | null;
+  readonly #raycaster = new THREE.Raycaster();
   readonly #entities = new Map<string, THREE.Object3D>();
   readonly #resizeObserver: ResizeObserver;
   #yaw = 0;
@@ -47,9 +55,11 @@ export class WorkspaceScene {
     root: HTMLElement,
     registry = new RendererRegistry(),
     surfaceStreamFactory: ((entityId: string) => SurfaceStream) | null = null,
+    inputSinkFactory: ((entityId: string) => WindowInputSink) | null = null,
   ) {
     this.#registry = registry;
     this.#surfaceStreamFactory = surfaceStreamFactory;
+    this.#inputSinkFactory = inputSinkFactory;
     this.#scene.background = new THREE.Color(PALETTE.foundryBlue);
     this.#scene.fog = new THREE.Fog(PALETTE.distanceFog, 18, 74);
 
@@ -137,6 +147,38 @@ export class WorkspaceScene {
     const movement = calculatePlanarMovement(this.#yaw, forward, right);
     this.#camera.position.x += movement.x * step;
     this.#camera.position.z += movement.z * step;
+  }
+
+  hitTestApplicationSurface(
+    clientX: number,
+    clientY: number,
+    requiredSurface?: ApplicationSurface,
+  ): ApplicationSurfaceHit | null {
+    const bounds = this.#renderer.domElement.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return null;
+
+    this.#raycaster.setFromCamera(
+      new THREE.Vector2(
+        ((clientX - bounds.left) / bounds.width) * 2 - 1,
+        -((clientY - bounds.top) / bounds.height) * 2 + 1,
+      ),
+      this.#camera,
+    );
+
+    const intersections = this.#raycaster.intersectObjects([...this.#entities.values()], true);
+    for (const intersection of intersections) {
+      let object: THREE.Object3D | null = intersection.object;
+      while (object) {
+        const surface = object.userData.applicationSurface;
+        if (surface instanceof ApplicationSurface && intersection.uv) {
+          if (requiredSurface && surface !== requiredSurface) break;
+          return { surface, u: intersection.uv.x, v: intersection.uv.y };
+        }
+        object = object.parent;
+      }
+    }
+
+    return null;
   }
 
   resize(): void {
@@ -236,6 +278,9 @@ export class WorkspaceScene {
         const surface = new ApplicationSurface(
           this.#surfaceStreamFactory(entity.id),
           textureTarget,
+          {
+            inputSink: this.#inputSinkFactory?.(entity.id),
+          },
         );
         textureTarget.object.userData.applicationSurface = surface;
         surface.start();

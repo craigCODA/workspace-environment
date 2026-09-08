@@ -41,7 +41,8 @@ var dispatcher = new CommandDispatcher(
     store,
     new UnavailableWindowFocusService(),
     windowCatalog,
-    windowReconciler);
+    windowReconciler,
+    new Win32InputRouter());
 var protocolServer = new WorkspaceProtocolServer(dispatcher, store);
 
 using var shutdown = new CancellationTokenSource();

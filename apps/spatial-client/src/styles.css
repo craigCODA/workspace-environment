@@ -44,6 +44,11 @@ button {
   cursor: grabbing;
 }
 
+.workspace-root.has-selected-surface,
+.workspace-root.is-surface-input {
+  cursor: default;
+}
+
 .scene-root,
 .workspace-canvas {
   position: absolute;
@@ -173,6 +178,11 @@ button {
   border-radius: 50%;
   pointer-events: none;
   transform: translate(-50%, -50%);
+}
+
+.workspace-root.has-selected-surface .reticle {
+  border-color: #c8784e;
+  box-shadow: 0 0 0.75rem rgb(200 120 78 / 82%);
 }
 
 .movement-hint {

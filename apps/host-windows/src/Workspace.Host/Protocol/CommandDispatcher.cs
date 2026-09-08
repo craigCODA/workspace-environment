@@ -30,9 +30,13 @@ public sealed class CommandDispatcher(
     IWorkspaceStore workspaceStore,
     IWindowFocusService windowFocusService,
     IWindowCatalog? windowCatalog = null,
-    WindowReconciler? windowReconciler = null)
+    WindowReconciler? windowReconciler = null,
+    IInputRouter? inputRouter = null)
 {
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
+
+    public Task ReleaseInputAsync(CancellationToken cancellationToken) =>
+        inputRouter?.ReleaseAllAsync(cancellationToken) ?? Task.CompletedTask;
 
     public async Task<DispatchOutcome> DispatchAsync(
         ProtocolEnvelope command,
@@ -55,6 +59,7 @@ public sealed class CommandDispatcher(
                 "application.launch" => await LaunchApplicationAsync(command, cancellationToken),
                 "entity.setPresentation" => await SetPresentationAsync(command, cancellationToken),
                 "window.focus" => await FocusWindowAsync(command, cancellationToken),
+                "window.input" => await RouteWindowInputAsync(command, cancellationToken),
                 "surface.open" => await OpenSurfaceAsync(command, cancellationToken),
                 "surface.frame" => await ReadSurfaceFrameAsync(command, cancellationToken),
                 "surface.close" => await CloseSurfaceAsync(command, cancellationToken),
@@ -404,6 +409,86 @@ public sealed class CommandDispatcher(
 
         await windowFocusService.FocusAsync(command.Target, cancellationToken);
         return Result(command.Id!, new { entityId = command.Target });
+    }
+
+    private async Task<DispatchOutcome> RouteWindowInputAsync(
+        ProtocolEnvelope command,
+        CancellationToken cancellationToken)
+    {
+        if (windowCatalog is null || windowReconciler is null || inputRouter is null)
+        {
+            return Error(command.Id, "input_unavailable", "Windows input routing is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(command.Target) || command.Payload is null)
+        {
+            return Error(command.Id, "invalid_target", "Window input requires a semantic target and intent.");
+        }
+
+        WindowInputIntent? intent;
+        try
+        {
+            intent = command.Payload.Value.Deserialize<WindowInputIntent>(
+                ProtocolEnvelope.SerializerOptions);
+        }
+        catch (JsonException)
+        {
+            return Error(command.Id, "invalid_payload", "Window input intent is invalid.");
+        }
+
+        if (intent is null || !IsValidInputIntent(intent))
+        {
+            return Error(command.Id, "invalid_payload", "Window input intent is invalid.");
+        }
+
+        var windows = await windowCatalog.ListAsync(cancellationToken);
+        var window = windows.FirstOrDefault(candidate =>
+            candidate.IsVisible
+            && !candidate.IsMinimized
+            && candidate.Bounds.Width > 0
+            && candidate.Bounds.Height > 0
+            && string.Equals(
+                windowReconciler.ResolveEntityId(candidate),
+                command.Target,
+                StringComparison.Ordinal));
+        if (window is null)
+        {
+            return Error(command.Id, "input_target_unavailable", "The Windows window is not currently available.");
+        }
+
+        try
+        {
+            await inputRouter.RouteAsync(window, intent, cancellationToken);
+        }
+        catch (InputTargetNotPermittedException exception)
+        {
+            return Error(command.Id, "INPUT_TARGET_NOT_PERMITTED", exception.Message);
+        }
+
+        return Result(command.Id!, new { entityId = command.Target, accepted = true });
+    }
+
+    private static bool IsValidInputIntent(WindowInputIntent intent)
+    {
+        static bool IsCoordinate(double? value) =>
+            value is >= 0 and <= 1 && double.IsFinite(value.Value);
+
+        return intent.Kind switch
+        {
+            "pointer" => intent.Phase is "move" or "down" or "up"
+                && IsCoordinate(intent.X)
+                && IsCoordinate(intent.Y)
+                && (intent.Phase == "move" || intent.Button is "primary" or "secondary"),
+            "wheel" => IsCoordinate(intent.X)
+                && IsCoordinate(intent.Y)
+                && intent.DeltaX is not null
+                && intent.DeltaY is not null
+                && double.IsFinite(intent.DeltaX.Value)
+                && double.IsFinite(intent.DeltaY.Value),
+            "key" => intent.Phase is "down" or "up" && !string.IsNullOrWhiteSpace(intent.Key),
+            "text" => !string.IsNullOrEmpty(intent.Text)
+                && intent.Text.Length <= WindowInputLimits.MaximumTextLength,
+            _ => false,
+        };
     }
 
     private static string? GetRequestedApplication(ProtocolEnvelope command)

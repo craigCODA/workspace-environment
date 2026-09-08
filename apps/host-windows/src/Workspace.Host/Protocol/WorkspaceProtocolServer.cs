@@ -104,7 +104,14 @@ public sealed class WorkspaceProtocolServer(
         }
         finally
         {
-            _connectionGate.Release();
+            try
+            {
+                await dispatcher.ReleaseInputAsync(CancellationToken.None);
+            }
+            finally
+            {
+                _connectionGate.Release();
+            }
         }
     }
 

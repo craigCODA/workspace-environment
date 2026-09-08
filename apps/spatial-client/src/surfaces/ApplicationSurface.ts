@@ -1,5 +1,12 @@
 import * as THREE from 'three';
-import type { SurfaceFrame, SurfaceStream } from './SurfaceStream.ts';
+import type {
+  KeyPhase,
+  PointerButton,
+  PointerPhase,
+  SurfaceFrame,
+  SurfaceStream,
+  WindowInputSink,
+} from './SurfaceStream.ts';
 
 export interface SurfaceTextureTarget {
   update(frame: SurfaceFrame): Promise<void> | void;
@@ -10,6 +17,7 @@ export interface SurfaceTextureTarget {
 export type ApplicationSurfaceOptions = {
   frameIntervalMs?: number;
   retryIntervalMs?: number;
+  inputSink?: WindowInputSink;
 };
 
 export class ThreeSurfaceTextureTarget implements SurfaceTextureTarget {
@@ -31,7 +39,10 @@ export class ThreeSurfaceTextureTarget implements SurfaceTextureTarget {
   async update(frame: SurfaceFrame): Promise<void> {
     if (this.#disposed) return;
     const bytes = decodeBase64(frame.dataBase64);
-    const bitmap = await createImageBitmap(new Blob([bytes], { type: frame.mimeType }));
+    const bitmap = await createImageBitmap(
+      new Blob([bytes], { type: frame.mimeType }),
+      { imageOrientation: 'flipY' },
+    );
     if (this.#disposed) {
       bitmap.close();
       return;
@@ -75,6 +86,7 @@ export class ApplicationSurface {
   readonly #textureTarget: SurfaceTextureTarget;
   readonly #frameIntervalMs: number;
   readonly #retryIntervalMs: number;
+  readonly #inputSink: WindowInputSink | null;
   #opened = false;
   #disposed = false;
   #timer: ReturnType<typeof setTimeout> | null = null;
@@ -88,6 +100,7 @@ export class ApplicationSurface {
     this.#textureTarget = textureTarget;
     this.#frameIntervalMs = options.frameIntervalMs ?? 80;
     this.#retryIntervalMs = options.retryIntervalMs ?? 1_000;
+    this.#inputSink = options.inputSink ?? null;
   }
 
   async renderNextFrame(): Promise<boolean> {
@@ -130,6 +143,27 @@ export class ApplicationSurface {
     void poll();
   }
 
+  pointer(
+    phase: PointerPhase,
+    u: number,
+    v: number,
+    button?: PointerButton,
+  ): Promise<unknown> {
+    return this.#requireInput().pointer(phase, u, v, button);
+  }
+
+  wheel(u: number, v: number, deltaX: number, deltaY: number): Promise<unknown> {
+    return this.#requireInput().wheel(u, v, deltaX, deltaY);
+  }
+
+  key(phase: KeyPhase, key: string): Promise<unknown> {
+    return this.#requireInput().key(phase, key);
+  }
+
+  text(value: string): Promise<unknown> {
+    return this.#requireInput().text(value);
+  }
+
   async dispose(): Promise<void> {
     if (this.#disposed) return;
     this.#disposed = true;
@@ -140,6 +174,11 @@ export class ApplicationSurface {
     } finally {
       this.#textureTarget.dispose();
     }
+  }
+
+  #requireInput(): WindowInputSink {
+    if (!this.#inputSink) throw new Error('Window input is not configured for this surface.');
+    return this.#inputSink;
   }
 }
 
