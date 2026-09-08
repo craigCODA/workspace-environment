@@ -14,8 +14,9 @@ public sealed class GraphicsCaptureWindowCapture : IWindowCapture
 {
     private readonly IDirect3DDevice _device;
     private readonly ConcurrentDictionary<string, CaptureSession> _sessions = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private long _nextStreamId;
-    private bool _disposed;
+    private int _disposed;
 
     public GraphicsCaptureWindowCapture()
     {
@@ -30,42 +31,56 @@ public sealed class GraphicsCaptureWindowCapture : IWindowCapture
 
     public IReadOnlyCollection<string> ActiveStreamIds => _sessions.Keys.ToArray();
 
-    public Task<SurfaceStreamHandle> StartAsync(nint hwnd, CancellationToken cancellationToken)
+    public async Task<SurfaceStreamHandle> StartAsync(
+        nint hwnd,
+        CancellationToken cancellationToken)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (hwnd == nint.Zero)
-        {
-            throw new ArgumentException("A real top-level window handle is required.", nameof(hwnd));
-        }
-
-        var streamId = $"surface-{Interlocked.Increment(ref _nextStreamId):x16}-{Guid.NewGuid():N}";
-        var item = Direct3DInterop.CreateItemForWindow(hwnd);
-        var session = new CaptureSession(
-            streamId,
-            item,
-            _device,
-            () => StopFromCaptureCallback(streamId));
-
-        if (!_sessions.TryAdd(streamId, session))
-        {
-            session.Dispose();
-            throw new InvalidOperationException("Unable to allocate a surface stream id.");
-        }
-
+        await _lifecycleGate.WaitAsync(cancellationToken);
         try
         {
-            session.Start();
-            return Task.FromResult(new SurfaceStreamHandle(
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            if (hwnd == nint.Zero)
+            {
+                throw new ArgumentException("A real top-level window handle is required.", nameof(hwnd));
+            }
+
+            var streamId = $"surface-{Interlocked.Increment(ref _nextStreamId):x16}-{Guid.NewGuid():N}";
+            var item = Direct3DInterop.CreateItemForWindow(hwnd);
+            var session = new CaptureSession(
                 streamId,
-                item.Size.Width,
-                item.Size.Height));
+                item,
+                _device,
+                () => StopFromCaptureCallback(streamId));
+
+            if (!_sessions.TryAdd(streamId, session))
+            {
+                session.Dispose();
+                throw new InvalidOperationException("Unable to allocate a surface stream id.");
+            }
+
+            try
+            {
+                if (session.ClosedSignaled)
+                {
+                    throw new InvalidOperationException("The Windows window closed before capture started.");
+                }
+
+                session.Start();
+                return new SurfaceStreamHandle(
+                    streamId,
+                    item.Size.Width,
+                    item.Size.Height);
+            }
+            catch
+            {
+                _sessions.TryRemove(streamId, out _);
+                session.Dispose();
+                throw;
+            }
         }
-        catch
+        finally
         {
-            _sessions.TryRemove(streamId, out _);
-            session.Dispose();
-            throw;
+            _lifecycleGate.Release();
         }
     }
 
@@ -74,7 +89,7 @@ public sealed class GraphicsCaptureWindowCapture : IWindowCapture
         long afterSequence,
         CancellationToken cancellationToken)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentException.ThrowIfNullOrWhiteSpace(streamId);
 
@@ -94,16 +109,23 @@ public sealed class GraphicsCaptureWindowCapture : IWindowCapture
         return Task.CompletedTask;
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
-        if (_disposed) return ValueTask.CompletedTask;
-        _disposed = true;
-        foreach (var streamId in _sessions.Keys.ToArray())
+        await _lifecycleGate.WaitAsync();
+        try
         {
-            StopCore(streamId);
+            if (Volatile.Read(ref _disposed) != 0) return;
+            Volatile.Write(ref _disposed, 1);
+            foreach (var streamId in _sessions.Keys.ToArray())
+            {
+                StopCore(streamId);
+            }
+            (_device as IDisposable)?.Dispose();
         }
-        (_device as IDisposable)?.Dispose();
-        return ValueTask.CompletedTask;
+        finally
+        {
+            _lifecycleGate.Release();
+        }
     }
 
     private void StopFromCaptureCallback(string streamId)
@@ -131,6 +153,7 @@ public sealed class GraphicsCaptureWindowCapture : IWindowCapture
         private long _sequence;
         private int _encodingFrame;
         private int _disposed;
+        private int _closedSignaled;
         private SizeInt32 _lastSize;
 
         public CaptureSession(
@@ -156,6 +179,8 @@ public sealed class GraphicsCaptureWindowCapture : IWindowCapture
 
         public void Start() => _session.StartCapture();
 
+        public bool ClosedSignaled => Volatile.Read(ref _closedSignaled) != 0;
+
         public SurfaceFrame? ReadLatest(long afterSequence)
         {
             var frame = Volatile.Read(ref _latest);
@@ -171,19 +196,26 @@ public sealed class GraphicsCaptureWindowCapture : IWindowCapture
             _framePool.Dispose();
         }
 
-        private void OnItemClosed(GraphicsCaptureItem sender, object args) => _closed();
+        private void OnItemClosed(GraphicsCaptureItem sender, object args)
+        {
+            Volatile.Write(ref _closedSignaled, 1);
+            _closed();
+        }
 
         private async void OnFrameArrived(Direct3D11CaptureFramePool sender, object args)
         {
-            if (Volatile.Read(ref _disposed) != 0
-                || Interlocked.Exchange(ref _encodingFrame, 1) != 0)
-            {
-                using var skipped = sender.TryGetNextFrame();
-                return;
-            }
+            var ownsEncoding = false;
 
             try
             {
+                if (Volatile.Read(ref _disposed) != 0) return;
+                if (Interlocked.Exchange(ref _encodingFrame, 1) != 0)
+                {
+                    using var skipped = sender.TryGetNextFrame();
+                    return;
+                }
+                ownsEncoding = true;
+
                 SizeInt32 size;
                 byte[] data;
                 using (var frame = sender.TryGetNextFrame())
@@ -223,7 +255,10 @@ public sealed class GraphicsCaptureWindowCapture : IWindowCapture
             }
             finally
             {
-                Volatile.Write(ref _encodingFrame, 0);
+                if (ownsEncoding)
+                {
+                    Volatile.Write(ref _encodingFrame, 0);
+                }
             }
         }
 
