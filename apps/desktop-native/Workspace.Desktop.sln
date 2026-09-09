@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Workspace.Desktop", "src\Wo
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Workspace.Host", "..\host-windows\src\Workspace.Host\Workspace.Host.csproj", "{763A73E2-B0D8-48BB-9E6C-E8A6F2995F6F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Workspace.Launcher", "src\Workspace.Launcher\Workspace.Launcher.csproj", "{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -87,6 +89,18 @@ Global
 		{763A73E2-B0D8-48BB-9E6C-E8A6F2995F6F}.Release|x64.Build.0 = Release|Any CPU
 		{763A73E2-B0D8-48BB-9E6C-E8A6F2995F6F}.Release|x86.ActiveCfg = Release|Any CPU
 		{763A73E2-B0D8-48BB-9E6C-E8A6F2995F6F}.Release|x86.Build.0 = Release|Any CPU
+		{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E}.Debug|x64.Build.0 = Debug|Any CPU
+		{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E}.Debug|x86.Build.0 = Debug|Any CPU
+		{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E}.Release|x64.ActiveCfg = Release|Any CPU
+		{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E}.Release|x64.Build.0 = Release|Any CPU
+		{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E}.Release|x86.ActiveCfg = Release|Any CPU
+		{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -96,5 +110,6 @@ Global
 		{8D90BF4F-C882-49B8-B2BC-2968F4C4EF1E} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{01E9559C-CB57-4517-A9A6-C864E5911366} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{96BB80E9-9DA1-46CC-8E66-CADB3043D1D8} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{BF2D232A-5557-4CB9-A0D3-DCE396F4AD6E} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

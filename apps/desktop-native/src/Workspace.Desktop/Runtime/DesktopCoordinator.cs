@@ -40,10 +40,14 @@ public sealed class DesktopCoordinator : IAsyncDisposable
     private bool _agentTurnActive;
     private bool _started;
     private bool _disposed;
+    private readonly string? _configuredSourceRoot;
 
-    public DesktopCoordinator(WebView2 webView, DispatcherQueue dispatcher)
+    public DesktopCoordinator(WebView2 webView, DispatcherQueue dispatcher, string? sourceRoot = null)
     {
         _dispatcher = dispatcher;
+        _configuredSourceRoot = string.IsNullOrWhiteSpace(sourceRoot)
+            ? null
+            : Path.GetFullPath(sourceRoot);
         _bridge = new WebViewBridge(webView);
         _bridge.MessageReceived += OnRendererMessage;
     }
@@ -56,7 +60,7 @@ public sealed class DesktopCoordinator : IAsyncDisposable
             return;
         }
 
-        _sourceRoot = ResolveSourceRoot();
+        _sourceRoot = _configuredSourceRoot ?? ResolveSourceRoot();
         var stateDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "WorkspaceEnvironment",
