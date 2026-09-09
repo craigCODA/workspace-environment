@@ -4,10 +4,23 @@ using System.Net;
 using Workspace.Host.Applications;
 using Workspace.Host.Persistence;
 using Workspace.Host.Protocol;
+using Workspace.Host.Runtime;
 using Workspace.Host.Windows;
 
 const string listenerPrefix = "http://127.0.0.1:41771/";
 const string workspacePath = "/workspace";
+
+HostRuntimeOptions runtimeOptions;
+try
+{
+    runtimeOptions = HostRuntimeOptions.Parse(args);
+}
+catch (ArgumentException exception)
+{
+    Console.Error.WriteLine(exception.Message);
+    Environment.ExitCode = 2;
+    return;
+}
 
 var localData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 var store = new AtomicWorkspaceStore(Path.Combine(
@@ -47,6 +60,12 @@ var dispatcher = new CommandDispatcher(
 var protocolServer = new WorkspaceProtocolServer(dispatcher, store);
 
 using var shutdown = new CancellationTokenSource();
+var parentMonitor = runtimeOptions.ParentProcessId is { } parentProcessId
+    ? ParentProcessMonitor.CancelWhenParentExitsAsync(
+        parentProcessId,
+        shutdown,
+        CancellationToken.None)
+    : Task.CompletedTask;
 Console.CancelKeyPress += (_, eventArgs) =>
 {
     eventArgs.Cancel = true;
@@ -81,6 +100,7 @@ finally
     catch (OperationCanceledException)
     {
     }
+    await parentMonitor;
 }
 
 static string? ResolveApplicationId(

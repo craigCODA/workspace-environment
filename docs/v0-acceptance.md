@@ -16,6 +16,7 @@ npm test
 npm run typecheck
 npm run build
 dotnet test apps/host-windows/Workspace.Host.sln --configuration Release
+npm run dist:win
 ```
 
 The automated suites cover:
@@ -105,6 +106,20 @@ Observed results:
 
 The deterministic window replacement above proves the same semantic reconciliation path across actual PID/HWND replacement without closing unrelated user Edge windows during acceptance.
 
+## Electron and installer acceptance
+
+Verified on 2026-09-09 on the same Windows 11 machine:
+
+1. `npm run electron` built the spatial client, started the C# host automatically, waited for its explicit readiness message, and opened a responsive `Workspace Environment` Electron window.
+2. The development shell bound immutable renderer assets to a random `127.0.0.1` port and connected to the unchanged host endpoint on `41771`.
+3. `npm run dist:win` produced both the unpacked executable and one-click NSIS installer.
+4. The unpacked executable started `Workspace.Host.exe` from packaged `resources\host` without a Vite or .NET SDK process.
+5. The installer completed with exit code `0`, installed per-user under `%LOCALAPPDATA%\Programs\workspace-environment`, and created desktop and Start menu shortcuts.
+6. The installed executable launched its bundled host and sandboxed renderer. A second launch focused the existing instance rather than creating another host.
+7. Normal close and forced Electron termination both left zero owned host processes and zero `41771` listeners.
+
+The verified installer is `dist\Workspace Environment Setup 0.1.0.exe` (141,279,423 bytes), with SHA-256 `3FA4F4FB9AAB043D4B9C20879A23DFEB9903508CC38CCC3BFD751149C7F87CA2`. It is intentionally unsigned for this slice.
+
 ## V0 boundaries
 
 V0 is deliberately narrow:
@@ -114,6 +129,6 @@ V0 is deliberately narrow:
 - The host is unelevated. Windows integrity boundaries can reject input to elevated targets with `INPUT_TARGET_NOT_PERMITTED`; the host does not self-elevate.
 - Multiple top-level windows for one application currently reconcile to one durable `main` window role. Per-tab and multiple durable-window heuristics are deferred.
 - Capture is a local desktop frame transport for the V0 proof, not remote-rendering or PCVR streaming.
-- There is no Electron package or Windows installer yet; host and client run as separate development processes.
+- The Electron/NSIS package is Windows x64 only and is currently unsigned; automatic updates and code signing are deferred.
 - Quest/WebXR, agents, MCP control, remote workers, audio, clipboard, notifications, files, projects, terminals, and other broader semantic resources are not claimed as implemented.
 - The host does not automatically commit, push, merge, publish, or otherwise grant applications or future agents unrelated authority.
