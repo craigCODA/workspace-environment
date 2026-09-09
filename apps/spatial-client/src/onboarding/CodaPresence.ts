@@ -25,20 +25,28 @@ export type CodaState =
 export type CodaPresenceModel = Readonly<{
   state: CodaState;
   caption: string;
+  microphoneEnabled: boolean;
   captionsEnabled: boolean;
   transcriptVisible: boolean;
+  terminalVisible: boolean;
+  proactiveMode: ProactiveMode;
   terminalEvents: readonly string[];
 }>;
+
+export type ProactiveMode = 'CriticalOnly' | 'IncludeCompletion' | 'Quiet' | 'Custom';
 
 type CodaPresenceAction =
   | Readonly<{ type: 'state'; state: CodaState }>
   | Readonly<{ type: 'caption'; text: string }>
   | Readonly<{
       type: 'preferences';
+      microphoneEnabled?: boolean;
       captionsEnabled?: boolean;
       transcriptVisible?: boolean;
+      proactiveMode?: ProactiveMode;
     }>
-  | Readonly<{ type: 'terminal-events'; events: readonly string[] }>;
+  | Readonly<{ type: 'terminal-events'; events: readonly string[] }>
+  | Readonly<{ type: 'terminal-visibility'; visible: boolean }>;
 
 const STATE_LABELS: Record<CodaState, string> = {
   waiting: 'Waiting for Hey Coda',
@@ -54,8 +62,11 @@ const STATE_LABELS: Record<CodaState, string> = {
 const INITIAL_MODEL: CodaPresenceModel = {
   state: 'waiting',
   caption: '',
+  microphoneEnabled: true,
   captionsEnabled: true,
   transcriptVisible: false,
+  terminalVisible: false,
+  proactiveMode: 'CriticalOnly',
   terminalEvents: [],
 };
 
@@ -71,13 +82,22 @@ export function reduceCodaPresence(
     case 'preferences':
       return {
         ...model,
+        microphoneEnabled: action.microphoneEnabled ?? model.microphoneEnabled,
         captionsEnabled: action.captionsEnabled ?? model.captionsEnabled,
         transcriptVisible: action.transcriptVisible ?? model.transcriptVisible,
+        proactiveMode: action.proactiveMode ?? model.proactiveMode,
       };
     case 'terminal-events':
       return { ...model, terminalEvents: action.events.slice(-24) };
+    case 'terminal-visibility':
+      return { ...model, terminalVisible: action.visible };
   }
 }
+
+export type CodaPresenceOptions = Readonly<{
+  onPreferenceChange?(change: Record<string, boolean | string>): void;
+  onVoiceControl?(action: 'pause' | 'resume' | 'stop'): void;
+}>;
 
 export class CodaPresence {
   readonly #element: HTMLElement;
@@ -86,9 +106,16 @@ export class CodaPresence {
   readonly #transcript: HTMLElement;
   readonly #terminal: HTMLElement;
   readonly #terminalList: HTMLUListElement;
+  readonly #microphoneButton: HTMLButtonElement;
+  readonly #captionsButton: HTMLButtonElement;
+  readonly #transcriptButton: HTMLButtonElement;
+  readonly #terminalButton: HTMLButtonElement;
+  readonly #alertsButton: HTMLButtonElement;
+  readonly #options: CodaPresenceOptions;
   #model = INITIAL_MODEL;
 
-  constructor(root: HTMLElement) {
+  constructor(root: HTMLElement, options: CodaPresenceOptions = {}) {
+    this.#options = options;
     this.#element = document.createElement('section');
     this.#element.className = 'coda-presence';
     this.#element.dataset.state = this.#model.state;
@@ -122,9 +149,39 @@ export class CodaPresence {
     this.#terminalList = document.createElement('ul');
     this.#terminal.append(terminalHeading, this.#terminalList);
 
+    const controls = document.createElement('nav');
+    controls.className = 'coda-controls';
+    controls.setAttribute('aria-label', 'Coda controls');
+    this.#microphoneButton = this.#controlButton(controls, 'Mic', () => {
+      const enabled = !this.#model.microphoneEnabled;
+      this.setPreferences({ microphoneEnabled: enabled });
+      this.#options.onPreferenceChange?.({ microphoneEnabled: enabled });
+    });
+    this.#captionsButton = this.#controlButton(controls, 'CC', () => {
+      const enabled = !this.#model.captionsEnabled;
+      this.setPreferences({ captionsEnabled: enabled });
+      this.#options.onPreferenceChange?.({ captionsEnabled: enabled });
+    });
+    this.#transcriptButton = this.#controlButton(controls, 'Transcript', () => {
+      const enabled = !this.#model.transcriptVisible;
+      this.setPreferences({ transcriptVisible: enabled });
+      this.#options.onPreferenceChange?.({ transcriptRetentionEnabled: enabled });
+    });
+    this.#terminalButton = this.#controlButton(controls, 'Activity', () => {
+      this.setTerminalVisible(!this.#model.terminalVisible);
+    });
+    this.#alertsButton = this.#controlButton(controls, 'Alerts', () => {
+      const modes: ProactiveMode[] = ['CriticalOnly', 'IncludeCompletion', 'Quiet'];
+      const index = modes.indexOf(this.#model.proactiveMode);
+      const proactiveMode = modes[(index + 1) % modes.length]!;
+      this.setPreferences({ proactiveMode });
+      this.#options.onPreferenceChange?.({ proactiveMode });
+    });
+
     this.#element.append(
       beacon,
       this.#stateLabel,
+      controls,
       this.#caption,
       this.#transcript,
       this.#terminal,
@@ -144,8 +201,10 @@ export class CodaPresence {
   }
 
   setPreferences(options: {
+    microphoneEnabled?: boolean;
     captionsEnabled?: boolean;
     transcriptVisible?: boolean;
+    proactiveMode?: ProactiveMode;
   }): void {
     this.#model = reduceCodaPresence(this.#model, { type: 'preferences', ...options });
     this.#render();
@@ -156,15 +215,26 @@ export class CodaPresence {
     this.#transcript.hidden = !this.#model.transcriptVisible || text.trim().length === 0;
   }
 
-  setTerminalEvents(events: readonly string[]): void {
+  setTerminalEvents(events: readonly string[], reveal = false): void {
     this.#model = reduceCodaPresence(this.#model, { type: 'terminal-events', events });
+    if (reveal) {
+      this.#model = reduceCodaPresence(this.#model, {
+        type: 'terminal-visibility',
+        visible: true,
+      });
+    }
     this.#terminalList.replaceChildren();
     for (const event of this.#model.terminalEvents) {
       const item = document.createElement('li');
       item.textContent = event;
       this.#terminalList.append(item);
     }
-    this.#terminal.hidden = this.#model.terminalEvents.length === 0;
+    this.#render();
+  }
+
+  setTerminalVisible(visible: boolean): void {
+    this.#model = reduceCodaPresence(this.#model, { type: 'terminal-visibility', visible });
+    this.#render();
   }
 
   destroy(): void {
@@ -178,6 +248,36 @@ export class CodaPresence {
     this.#caption.dataset.visible = String(
       this.#model.captionsEnabled && this.#model.caption.length > 0,
     );
-    if (!this.#model.transcriptVisible) this.#transcript.hidden = true;
+    this.#microphoneButton.setAttribute('aria-pressed', String(this.#model.microphoneEnabled));
+    this.#microphoneButton.textContent = this.#model.microphoneEnabled ? 'Mic on' : 'Mic off';
+    this.#captionsButton.setAttribute('aria-pressed', String(this.#model.captionsEnabled));
+    this.#captionsButton.textContent = this.#model.captionsEnabled ? 'CC on' : 'CC off';
+    this.#transcriptButton.setAttribute('aria-pressed', String(this.#model.transcriptVisible));
+    this.#terminalButton.setAttribute('aria-pressed', String(this.#model.terminalVisible));
+    this.#alertsButton.setAttribute(
+      'aria-label',
+      `Proactive alerts: ${this.#model.proactiveMode}`,
+    );
+    this.#alertsButton.textContent = this.#model.proactiveMode === 'CriticalOnly'
+      ? 'Alerts: critical'
+      : this.#model.proactiveMode === 'IncludeCompletion'
+        ? 'Alerts: +done'
+        : 'Alerts: quiet';
+    this.#terminal.hidden = !this.#model.terminalVisible || this.#model.terminalEvents.length === 0;
+    this.#transcript.hidden = !this.#model.transcriptVisible
+      || (this.#transcript.textContent?.trim().length ?? 0) === 0;
+  }
+
+  #controlButton(
+    root: HTMLElement,
+    label: string,
+    onClick: () => void,
+  ): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.addEventListener('click', onClick);
+    root.append(button);
+    return button;
   }
 }

@@ -5,8 +5,11 @@ import { reduceCodaPresence, type CodaPresenceModel } from './CodaPresence.ts';
 const initial: CodaPresenceModel = {
   state: 'waiting',
   caption: '',
+  microphoneEnabled: true,
   captionsEnabled: true,
   transcriptVisible: false,
+  terminalVisible: false,
+  proactiveMode: 'CriticalOnly',
   terminalEvents: [],
 };
 
@@ -39,4 +42,15 @@ test('terminal progress stays summarized and bounded', () => {
 
   assert.equal(next.terminalEvents.length, 24);
   assert.equal(next.terminalEvents.at(-1), 'event 39');
+});
+
+test('terminal visibility and microphone state remain directly togglable', () => {
+  const terminal = reduceCodaPresence(initial, { type: 'terminal-visibility', visible: true });
+  const microphone = reduceCodaPresence(terminal, {
+    type: 'preferences',
+    microphoneEnabled: false,
+  });
+
+  assert.equal(microphone.terminalVisible, true);
+  assert.equal(microphone.microphoneEnabled, false);
 });

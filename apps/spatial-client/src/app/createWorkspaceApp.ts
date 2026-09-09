@@ -3,7 +3,11 @@ import { WorkspaceSocket } from '../protocol/WorkspaceSocket.ts';
 import { WorldReplica } from '../replica/WorldReplica.ts';
 import { SceneReplicaSynchronizer } from '../replica/SceneReplicaSynchronizer.ts';
 import { WorkspaceScene } from '../rendering/WorkspaceScene.ts';
-import { CodaPresence, type CodaState } from '../onboarding/CodaPresence.ts';
+import {
+  CodaPresence,
+  type CodaState,
+  type ProactiveMode,
+} from '../onboarding/CodaPresence.ts';
 import { CameraNavigator } from '../navigation/CameraNavigator.ts';
 import { SceneCommandController } from '../navigation/SceneCommandController.ts';
 import {
@@ -60,6 +64,13 @@ const CODA_STATES = new Set<CodaState>([
   'mic-off',
 ]);
 
+const PROACTIVE_MODES = new Set<ProactiveMode>([
+  'CriticalOnly',
+  'IncludeCompletion',
+  'Quiet',
+  'Custom',
+]);
+
 export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   const originalClassName = root.className;
   const originalTabIndex = root.getAttribute('tabindex');
@@ -85,7 +96,10 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
 
   const unsubscribe = socket.subscribe((envelope) => synchronizer.apply(envelope));
   const bridge = new WorkspaceNativeBridge();
-  const coda = new CodaPresence(root);
+  const coda = new CodaPresence(root, {
+    onPreferenceChange: (change) => bridge.post('preference.change.request', change),
+    onVoiceControl: (action) => bridge.post('voice.control', { action }),
+  });
   let selectedEntityId: string | null = null;
   const navigator = new CameraNavigator(scene);
   const sceneCommands = new SceneCommandController(
@@ -115,20 +129,33 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       if (Array.isArray(payload.terminalEvents)) {
         coda.setTerminalEvents(payload.terminalEvents.filter(
           (event): event is string => typeof event === 'string',
-        ));
+        ), payload.reveal === true);
       }
       if (payload.level === 'error') coda.setState('needs-attention');
     }),
     bridge.subscribe('preference.changed', (message) => {
       const payload = payloadRecord(message);
+      const proactiveMode = payload.proactiveMode;
       coda.setPreferences({
+        microphoneEnabled: typeof payload.microphoneEnabled === 'boolean'
+          ? payload.microphoneEnabled
+          : undefined,
         captionsEnabled: typeof payload.captionsEnabled === 'boolean'
           ? payload.captionsEnabled
           : undefined,
         transcriptVisible: typeof payload.transcriptRetentionEnabled === 'boolean'
           ? payload.transcriptRetentionEnabled
           : undefined,
+        proactiveMode: typeof proactiveMode === 'string'
+          && PROACTIVE_MODES.has(proactiveMode as ProactiveMode)
+          ? proactiveMode as ProactiveMode
+          : undefined,
       });
+    }),
+    bridge.subscribe('ui.command', (message) => {
+      const action = payloadRecord(message).action;
+      if (action === 'show-terminal') coda.setTerminalVisible(true);
+      if (action === 'hide-terminal') coda.setTerminalVisible(false);
     }),
     bridge.subscribe('scene.command', (message) => {
       void sceneCommands.handle(message.payload).then((result) => {

@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Controls;
 using Workspace.Desktop.Bridge;
@@ -7,6 +9,7 @@ using Workspace.Desktop.Core.Agent;
 using Workspace.Desktop.Core.Bridge;
 using Workspace.Desktop.Core.Capabilities;
 using Workspace.Desktop.Core.Preferences;
+using Workspace.Desktop.Core.Runtime;
 using Workspace.Desktop.Core.Voice;
 using Workspace.Desktop.Windows.Agent;
 using Workspace.Desktop.Windows.Voice;
@@ -21,15 +24,20 @@ public sealed class DesktopCoordinator : IAsyncDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private readonly StringBuilder _assistantResponse = new();
     private readonly List<string> _terminalEvents = [];
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _sceneResults = new();
     private VoiceProfileStore? _profileStore;
     private VoiceProfile _profile = VoiceProfile.Default;
     private CapabilityBroker? _capabilities;
     private VoiceConversationController? _voice;
     private CodexAppServerClient? _agent;
-    private AgentApprovalRequested? _pendingApproval;
+    private PendingApproval? _pendingApproval;
+    private IReadOnlyList<SceneDirective>? _pendingNavigation;
     private Task? _agentEvents;
     private Task? _voiceStartup;
     private string? _sourceRoot;
+    private string? _lastSpokenText;
+    private long _sceneRequestSequence;
+    private bool _agentTurnActive;
     private bool _started;
     private bool _disposed;
 
@@ -179,9 +187,28 @@ public sealed class DesktopCoordinator : IAsyncDisposable
 
     private async Task HandleVoiceCommandAsync(string text)
     {
+        var local = CodaLocalCommandParser.Parse(text);
+        if (local.Kind == CodaLocalCommandKind.Stop)
+        {
+            await HandleLocalCommandAsync(local);
+            return;
+        }
+
         if (_pendingApproval is not null)
         {
             await HandleApprovalAnswerAsync(text);
+            return;
+        }
+
+        if (_pendingNavigation is not null)
+        {
+            await HandleNavigationAnswerAsync(text);
+            return;
+        }
+
+        if (local.Kind != CodaLocalCommandKind.AgentRequest)
+        {
+            await HandleLocalCommandAsync(local);
             return;
         }
 
@@ -195,12 +222,19 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         _assistantResponse.Clear();
         try
         {
+            var snapshot = await InspectSceneAsync(_lifetime.Token);
             await agent.StartTurnAsync(
                 "You are Coda, the voice-first guide inside Workspace Environment. "
                 + "Act on the user's request in the current workspace when allowed. "
-                + "Keep the final response concise and natural to speak aloud. User request: "
-                + text,
+                + "Use only brokered capabilities and never request or infer scene pixels. "
+                + "Keep the final response concise and natural to speak aloud. "
+                + "You may control the Three.js space with private directives shaped exactly like "
+                + "[[scene:{\"command\":\"camera.focus\",\"args\":{\"entityId\":\"exact id from snapshot\"}}]]. "
+                + "Allowed commands: camera.navigate, camera.focus, camera.stop, camera.return-home, "
+                + "surface.move, surface.resize. Directive markup is removed before speech. "
+                + $"Current structured scene snapshot: {snapshot}. User request: {text}",
                 _lifetime.Token);
+            _agentTurnActive = true;
         }
         catch (Exception exception)
         {
@@ -210,36 +244,52 @@ public sealed class DesktopCoordinator : IAsyncDisposable
 
     private async Task HandleApprovalAnswerAsync(string text)
     {
-        var approval = _pendingApproval;
+        var pending = _pendingApproval;
         var agent = _agent;
-        if (approval is null || agent is null)
+        var capabilities = _capabilities;
+        if (pending is null || agent is null || capabilities is null)
         {
             return;
         }
 
         var answer = text.Trim().ToLowerInvariant();
-        AgentApprovalDecision? decision = answer switch
+        if (answer.Contains("remember this", StringComparison.Ordinal))
         {
-            var value when value.Contains("approve for this session", StringComparison.Ordinal)
-                || value.Contains("always", StringComparison.Ordinal) =>
+            try
+            {
+                await capabilities.RememberAsync(
+                    new CapabilityGrant(pending.Capability.Capability, pending.Capability.Scope, null),
+                    _lifetime.Token);
+                _pendingApproval = null;
+                await agent.RespondToApprovalAsync(
+                    pending.Request.RequestId,
                     AgentApprovalDecision.AcceptForSession,
-            var value when value.Contains("approve", StringComparison.Ordinal)
-                || value is "yes" or "do it" => AgentApprovalDecision.Accept,
-            var value when value.Contains("deny", StringComparison.Ordinal)
-                || value is "no" or "cancel" => AgentApprovalDecision.Decline,
-            _ => null,
-        };
+                    _lifetime.Token);
+                await SpeakAsync("Remembered for this project. I'll continue.");
+            }
+            catch (InvalidOperationException)
+            {
+                await SpeakAsync("That action always needs fresh approval. Say allow once or deny.");
+            }
+            return;
+        }
+
+        AgentApprovalDecision? decision = answer.Contains("allow once", StringComparison.Ordinal)
+            ? AgentApprovalDecision.Accept
+            : answer.Contains("deny", StringComparison.Ordinal)
+                ? AgentApprovalDecision.Decline
+                : null;
         if (decision is null)
         {
-            await SpeakAsync("Please say approve, approve for this session, or deny.");
+            await SpeakAsync("Please say allow once, remember this, or deny.");
             return;
         }
 
         _pendingApproval = null;
-        await agent.RespondToApprovalAsync(approval.RequestId, decision.Value, _lifetime.Token);
+        await agent.RespondToApprovalAsync(pending.Request.RequestId, decision.Value, _lifetime.Token);
         await SpeakAsync(decision == AgentApprovalDecision.Decline
             ? "Denied."
-            : "Approved. I'll continue.");
+            : "Allowed once.");
     }
 
     private async Task PumpAgentEventsAsync(
@@ -262,18 +312,32 @@ public sealed class DesktopCoordinator : IAsyncDisposable
                         AddTerminalEvent(output.Text.TrimEnd());
                         break;
                     case AgentApprovalRequested approval:
-                        _pendingApproval = approval;
+                        var classified = ApprovalCapabilityClassifier.Classify(
+                            approval,
+                            _sourceRoot ?? approval.WorkingDirectory ?? AppContext.BaseDirectory);
+                        if (_capabilities?.IsGranted(classified.Capability, classified.Scope) == true)
+                        {
+                            await agent.RespondToApprovalAsync(
+                                approval.RequestId,
+                                AgentApprovalDecision.AcceptForSession,
+                                cancellationToken);
+                            AddTerminalEvent(
+                                $"Allowed remembered {classified.Capability} for {classified.Scope}");
+                            break;
+                        }
+                        _pendingApproval = new PendingApproval(approval, classified);
                         PostOnUi("voice.state", new { state = "needs-attention" });
                         await SpeakAsync(
-                            $"I need approval to {approval.CommandSummary}. "
-                            + "Say approve, approve for this session, or deny.");
+                            $"I need approval to {approval.CommandSummary}, in {classified.Scope}. "
+                            + "Say allow once, remember this, or deny.");
                         break;
                     case AgentTurnCompleted completed:
+                        _agentTurnActive = false;
                         var response = _assistantResponse.ToString().Trim();
                         _assistantResponse.Clear();
                         if (completed.Status == "completed" && response.Length > 0)
                         {
-                            await SpeakAsync(response);
+                            await HandleAgentResponseAsync(response);
                         }
                         else if (completed.Status != "completed")
                         {
@@ -284,10 +348,22 @@ public sealed class DesktopCoordinator : IAsyncDisposable
                         await SpeakAsync(authentication.Message);
                         break;
                     case AgentProcessExited exited:
-                        await SpeakAsync($"The coding agent stopped. {exited.Message}");
+                        _agentTurnActive = false;
+                        if (ProactiveSpeechPolicy.ShouldSpeak(
+                            _profile.ProactiveMode,
+                            ProactiveEventKind.Failure))
+                        {
+                            await SpeakAsync($"The coding agent stopped. {exited.Message}");
+                        }
                         break;
                     case AgentProtocolFailure failure:
                         AddTerminalEvent($"Agent protocol: {failure.Message}");
+                        if (ProactiveSpeechPolicy.ShouldSpeak(
+                            _profile.ProactiveMode,
+                            ProactiveEventKind.Failure))
+                        {
+                            await SpeakAsync("Coda's coding connection needs attention.");
+                        }
                         break;
                 }
             }
@@ -308,6 +384,375 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         }
         PostOnUi("agent.event", new { terminalEvents = _terminalEvents.ToArray() });
     }
+
+    private async Task HandleLocalCommandAsync(CodaLocalCommand command)
+    {
+        switch (command.Kind)
+        {
+            case CodaLocalCommandKind.Stop:
+                if (_pendingApproval is { } pending && _agent is not null)
+                {
+                    _pendingApproval = null;
+                    await _agent.RespondToApprovalAsync(
+                        pending.Request.RequestId,
+                        AgentApprovalDecision.Cancel,
+                        _lifetime.Token);
+                }
+                _pendingNavigation = null;
+                if (_agentTurnActive && _agent is not null)
+                {
+                    await _agent.InterruptAsync(_lifetime.Token);
+                    _agentTurnActive = false;
+                }
+                if (_voice is not null)
+                {
+                    await _voice.StopConversationAsync(_lifetime.Token);
+                }
+                return;
+            case CodaLocalCommandKind.Pause:
+                if (_voice is not null) await _voice.PauseAsync(_lifetime.Token);
+                return;
+            case CodaLocalCommandKind.Resume:
+                if (_voice is not null) await _voice.ResumeAsync(_lifetime.Token);
+                await SpeakAsync("Listening is on. Say Hey Coda when you need me.");
+                return;
+            case CodaLocalCommandKind.Repeat:
+                await SpeakAsync(_lastSpokenText ?? "I don't have anything to repeat yet.");
+                return;
+            case CodaLocalCommandKind.ShowTerminal:
+                PostOnUi("ui.command", new { action = "show-terminal" });
+                await SpeakAsync("Activity is open.");
+                return;
+            case CodaLocalCommandKind.HideTerminal:
+                PostOnUi("ui.command", new { action = "hide-terminal" });
+                await SpeakAsync("Activity is hidden.");
+                return;
+            case CodaLocalCommandKind.ListPermissions:
+                var grants = _capabilities?.Grants ?? [];
+                await SpeakAsync(grants.Count == 0
+                    ? "I don't have any remembered project permissions."
+                    : "I remember " + string.Join(
+                        "; ",
+                        grants.Select(grant => $"{grant.Capability} for {grant.Scope}")) + ".");
+                return;
+            case CodaLocalCommandKind.ForgetPermissions:
+                if (_capabilities is not null)
+                {
+                    foreach (var grant in _capabilities.Grants.ToArray())
+                    {
+                        await _capabilities.RevokeAsync(
+                            grant.Capability,
+                            grant.Scope,
+                            _lifetime.Token);
+                    }
+                }
+                await SpeakAsync("I forgot the remembered project permissions.");
+                return;
+            case CodaLocalCommandKind.ResetOnboarding:
+                _profile = _profile with { PreferredName = null, OnboardingCompleted = false };
+                await SaveProfileAsync();
+                await SpeakAsync("Onboarding will start again the next time Workspace opens.");
+                return;
+            case CodaLocalCommandKind.ChangeName:
+                if (!string.IsNullOrWhiteSpace(command.Argument))
+                {
+                    _profile = _profile with
+                    {
+                        PreferredName = command.Argument.Trim(),
+                        OnboardingCompleted = true,
+                    };
+                    await SaveProfileAsync();
+                    await SpeakAsync($"I'll call you {_profile.PreferredName}.");
+                }
+                return;
+            case CodaLocalCommandKind.MicrophoneOn:
+                await SetMicrophoneAsync(true);
+                await SpeakAsync("Microphone on.");
+                return;
+            case CodaLocalCommandKind.MicrophoneOff:
+                await SetMicrophoneAsync(false);
+                await SpeakAsync("Microphone off.");
+                return;
+            case CodaLocalCommandKind.CaptionsOn:
+                await SetCaptionsAsync(true);
+                await SpeakAsync("Captions on.");
+                return;
+            case CodaLocalCommandKind.CaptionsOff:
+                await SetCaptionsAsync(false);
+                await SpeakAsync("Captions off.");
+                return;
+            case CodaLocalCommandKind.TranscriptOn:
+                _profile = _profile with { TranscriptRetentionEnabled = true };
+                await SaveProfileAsync();
+                await SpeakAsync("Transcript display on.");
+                return;
+            case CodaLocalCommandKind.TranscriptOff:
+                _profile = _profile with { TranscriptRetentionEnabled = false };
+                await SaveProfileAsync();
+                await SpeakAsync("Transcript display off.");
+                return;
+            case CodaLocalCommandKind.ProactiveCritical:
+                await SetProactiveModeAsync(ProactiveSpeechMode.CriticalOnly, "Only critical alerts will interrupt you.");
+                return;
+            case CodaLocalCommandKind.ProactiveCompletion:
+                await SetProactiveModeAsync(ProactiveSpeechMode.IncludeCompletion, "I'll also announce completed work.");
+                return;
+            case CodaLocalCommandKind.ProactiveQuiet:
+                await SetProactiveModeAsync(ProactiveSpeechMode.Quiet, "Proactive alerts are quiet.");
+                return;
+            case CodaLocalCommandKind.NavigationGuide:
+                await SetNavigationModeAsync(AgentNavigationMode.GuideFreely, "I can guide you through the space freely.");
+                return;
+            case CodaLocalCommandKind.NavigationAsk:
+                await SetNavigationModeAsync(AgentNavigationMode.AskFirst, "I'll ask before moving you.");
+                return;
+            case CodaLocalCommandKind.NavigationVoiceOnly:
+                await SetNavigationModeAsync(AgentNavigationMode.VoiceCommandsOnly, "I'll move you only on a direct voice command.");
+                return;
+            case CodaLocalCommandKind.ReturnHome:
+                await SendSceneCommandAsync(
+                    "camera.return-home",
+                    new { options = new { mode = "glide", durationMs = 900 } },
+                    _lifetime.Token);
+                await SpeakAsync("Taking you home.");
+                return;
+            case CodaLocalCommandKind.StopCamera:
+                await SendSceneCommandAsync("camera.stop", new { }, _lifetime.Token);
+                return;
+            case CodaLocalCommandKind.FocusEntity:
+                await FocusEntityAsync(command.Argument ?? string.Empty);
+                return;
+            case CodaLocalCommandKind.AgentRequest:
+            default:
+                return;
+        }
+    }
+
+    private async Task HandleAgentResponseAsync(string response)
+    {
+        var parsed = SceneDirectiveParser.Parse(response);
+        if (parsed.SpokenText.Length > 0)
+        {
+            await SpeakResponseAsync(parsed.SpokenText);
+        }
+        if (parsed.Directives.Count == 0)
+        {
+            return;
+        }
+
+        switch (_profile.NavigationMode)
+        {
+            case AgentNavigationMode.GuideFreely:
+                await ExecuteSceneDirectivesAsync(parsed.Directives);
+                break;
+            case AgentNavigationMode.AskFirst:
+                _pendingNavigation = parsed.Directives;
+                await SpeakAsync(
+                    $"I am ready to {DescribeSceneDirective(parsed.Directives[0])}. Say allow once or deny.");
+                break;
+            case AgentNavigationMode.VoiceCommandsOnly:
+                await SpeakAsync("I left the view where it is because navigation is set to voice commands only.");
+                break;
+        }
+    }
+
+    private async Task HandleNavigationAnswerAsync(string text)
+    {
+        var directives = _pendingNavigation;
+        if (directives is null) return;
+        var answer = text.Trim().ToLowerInvariant();
+        if (answer.Contains("deny", StringComparison.Ordinal))
+        {
+            _pendingNavigation = null;
+            await SpeakAsync("Navigation cancelled.");
+            return;
+        }
+        if (!answer.Contains("allow once", StringComparison.Ordinal))
+        {
+            await SpeakAsync("Please say allow once or deny.");
+            return;
+        }
+        _pendingNavigation = null;
+        await ExecuteSceneDirectivesAsync(directives);
+    }
+
+    private async Task ExecuteSceneDirectivesAsync(IReadOnlyList<SceneDirective> directives)
+    {
+        foreach (var directive in directives)
+        {
+            var result = await SendSceneCommandAsync(
+                directive.Command,
+                directive.Arguments,
+                _lifetime.Token);
+            if (result.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.False)
+            {
+                var error = ReadString(result, "error") ?? "The scene rejected that movement.";
+                await SpeakAsync(error);
+                return;
+            }
+        }
+    }
+
+    private async Task FocusEntityAsync(string requestedName)
+    {
+        var inspection = await SendSceneCommandAsync("scene.inspect", new { }, _lifetime.Token);
+        if (!inspection.TryGetProperty("payload", out var snapshot)
+            || !snapshot.TryGetProperty("entities", out var entities)
+            || entities.ValueKind != JsonValueKind.Array)
+        {
+            await SpeakAsync("I couldn't inspect the space just now.");
+            return;
+        }
+
+        var query = requestedName.Trim();
+        JsonElement? match = entities.EnumerateArray().FirstOrDefault(entity =>
+            (ReadString(entity, "name")?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (ReadString(entity, "id")?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false));
+        var entityId = match is { } entity ? ReadString(entity, "id") : null;
+        if (string.IsNullOrWhiteSpace(entityId))
+        {
+            await SpeakAsync($"I couldn't find {query} in the current space.");
+            return;
+        }
+
+        await SendSceneCommandAsync(
+            "camera.focus",
+            new { entityId, options = new { mode = "glide", durationMs = 900 } },
+            _lifetime.Token);
+        await SpeakAsync($"Taking you to {ReadString(match!.Value, "name") ?? query}.");
+    }
+
+    private async Task<string> InspectSceneAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await SendSceneCommandAsync("scene.inspect", new { }, cancellationToken);
+            if (result.TryGetProperty("payload", out var payload))
+            {
+                var json = payload.GetRawText();
+                return json.Length <= 32_000 ? json : json[..32_000];
+            }
+        }
+        catch (Exception exception)
+        {
+            AddTerminalEvent($"Scene inspection: {exception.Message}");
+        }
+        return "{\"camera\":null,\"entities\":[],\"status\":\"unavailable\"}";
+    }
+
+    private async Task<JsonElement> SendSceneCommandAsync(
+        string command,
+        object? arguments,
+        CancellationToken cancellationToken)
+    {
+        var id = $"native-scene-{Interlocked.Increment(ref _sceneRequestSequence)}";
+        var completion = new TaskCompletionSource<JsonElement>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_sceneResults.TryAdd(id, completion))
+        {
+            throw new InvalidOperationException("A duplicate scene request was generated.");
+        }
+        if (!_dispatcher.TryEnqueue(() =>
+            {
+                try
+                {
+                    _bridge.PostSceneCommand(id, command, arguments);
+                }
+                catch (Exception exception)
+                {
+                    _sceneResults.TryRemove(id, out _);
+                    completion.TrySetException(exception);
+                }
+            }))
+        {
+            _sceneResults.TryRemove(id, out _);
+            throw new InvalidOperationException("The workspace view is not available.");
+        }
+
+        try
+        {
+            return await completion.Task.WaitAsync(TimeSpan.FromSeconds(8), cancellationToken);
+        }
+        finally
+        {
+            _sceneResults.TryRemove(id, out _);
+        }
+    }
+
+    private void CompleteSceneCommand(JsonElement payload)
+    {
+        var id = ReadString(payload, "id");
+        if (id is not null && _sceneResults.TryRemove(id, out var completion))
+        {
+            completion.TrySetResult(payload.Clone());
+        }
+    }
+
+    private async Task SpeakResponseAsync(string text)
+    {
+        var spoken = text.Length <= 3_000 ? text : text[..3_000] + " The rest is in Coda activity.";
+        _lastSpokenText = spoken;
+        if (_voice is null)
+        {
+            PostOnUi("voice.caption", new { text = spoken, final = true, utteranceId = "text-recovery" });
+            return;
+        }
+        foreach (var sentence in Regex.Split(spoken, @"(?<=[.!?])\s+")
+                     .Where(sentence => !string.IsNullOrWhiteSpace(sentence)))
+        {
+            await _voice.SpeakAsync(sentence, _lifetime.Token);
+        }
+    }
+
+    private async Task SetMicrophoneAsync(bool enabled)
+    {
+        _profile = _profile with { MicrophoneEnabled = enabled };
+        if (_voice is not null)
+        {
+            await _voice.SetMicrophoneEnabledAsync(enabled, _lifetime.Token);
+        }
+        await SaveProfileAsync();
+    }
+
+    private async Task SetCaptionsAsync(bool enabled)
+    {
+        _profile = _profile with { CaptionsEnabled = enabled };
+        _voice?.SetCaptionsEnabled(enabled);
+        await SaveProfileAsync();
+    }
+
+    private async Task SetProactiveModeAsync(ProactiveSpeechMode mode, string acknowledgement)
+    {
+        _profile = _profile with { ProactiveMode = mode };
+        await SaveProfileAsync();
+        await SpeakAsync(acknowledgement);
+    }
+
+    private async Task SetNavigationModeAsync(AgentNavigationMode mode, string acknowledgement)
+    {
+        _profile = _profile with { NavigationMode = mode };
+        await SaveProfileAsync();
+        await SpeakAsync(acknowledgement);
+    }
+
+    private async Task SaveProfileAsync()
+    {
+        if (_profileStore is not null)
+        {
+            await _profileStore.SaveAsync(_profile, _lifetime.Token);
+            PostPreferences();
+        }
+    }
+
+    private static string DescribeSceneDirective(SceneDirective directive) => directive.Command switch
+    {
+        "camera.focus" => "move your view to the requested surface",
+        "camera.navigate" => "move your viewpoint",
+        "camera.return-home" => "return your view home",
+        "surface.move" => "move a surface",
+        "surface.resize" => "resize a surface",
+        _ => "adjust the workspace view",
+    };
 
     private async Task SavePreferredNameAsync(string name)
     {
@@ -342,6 +787,9 @@ public sealed class DesktopCoordinator : IAsyncDisposable
                 {
                     _ = HandleApprovalAnswerAsync(answer);
                 }
+                break;
+            case "scene.command.result":
+                CompleteSceneCommand(message.Payload);
                 break;
         }
     }
@@ -391,6 +839,11 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         {
             _profile = _profile with { TranscriptRetentionEnabled = transcript };
         }
+        if (ReadString(payload, "proactiveMode") is { } proactive
+            && Enum.TryParse<ProactiveSpeechMode>(proactive, out var proactiveMode))
+        {
+            _profile = _profile with { ProactiveMode = proactiveMode };
+        }
         await store.SaveAsync(_profile, _lifetime.Token);
         PostPreferences();
     }
@@ -405,8 +858,24 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         wakePhrase = _profile.WakePhrase,
     });
 
-    private Task SpeakAsync(string text) => _voice?.SpeakAsync(text, _lifetime.Token)
-        ?? Task.CompletedTask;
+    private Task SpeakAsync(string text)
+    {
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            _lastSpokenText = text.Trim();
+        }
+        if (_voice is not null)
+        {
+            return _voice.SpeakAsync(text, _lifetime.Token);
+        }
+        PostOnUi("voice.caption", new
+        {
+            text,
+            final = true,
+            utteranceId = "text-recovery",
+        });
+        return Task.CompletedTask;
+    }
 
     private void PostOnUi(string type, object payload)
     {
@@ -483,6 +952,10 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         }
         _disposed = true;
         _lifetime.Cancel();
+        foreach (var completion in _sceneResults.Values)
+        {
+            completion.TrySetCanceled();
+        }
         _bridge.MessageReceived -= OnRendererMessage;
         if (_voice is not null)
         {
@@ -496,4 +969,8 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         await _host.DisposeAsync();
         _lifetime.Dispose();
     }
+
+    private sealed record PendingApproval(
+        AgentApprovalRequested Request,
+        ApprovalCapability Capability);
 }

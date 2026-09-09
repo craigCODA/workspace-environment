@@ -1,0 +1,34 @@
+using Workspace.Desktop.Core.Runtime;
+
+namespace Workspace.Desktop.Core.Tests;
+
+public sealed class CodaLocalCommandParserTests
+{
+    [Theory]
+    [InlineData("stop", CodaLocalCommandKind.Stop)]
+    [InlineData("show terminal", CodaLocalCommandKind.ShowTerminal)]
+    [InlineData("hide the terminal", CodaLocalCommandKind.HideTerminal)]
+    [InlineData("turn captions off", CodaLocalCommandKind.CaptionsOff)]
+    [InlineData("keep critical alerts only", CodaLocalCommandKind.ProactiveCritical)]
+    [InlineData("go home", CodaLocalCommandKind.ReturnHome)]
+    public void Recognizes_local_control_vocabulary(string text, CodaLocalCommandKind expected)
+    {
+        Assert.Equal(expected, CodaLocalCommandParser.Parse(text).Kind);
+    }
+
+    [Fact]
+    public void Extracts_a_new_preferred_name_without_sending_it_to_codex()
+    {
+        var command = CodaLocalCommandParser.Parse("Call me Morgan");
+
+        Assert.Equal(CodaLocalCommandKind.ChangeName, command.Kind);
+        Assert.Equal("Morgan", command.Argument);
+    }
+
+    [Fact]
+    public void General_requests_are_left_for_the_coding_agent()
+    {
+        Assert.Equal(CodaLocalCommandKind.AgentRequest,
+            CodaLocalCommandParser.Parse("build a floating project browser").Kind);
+    }
+}

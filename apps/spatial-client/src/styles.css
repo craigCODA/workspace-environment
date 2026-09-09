@@ -95,6 +95,41 @@ button {
   letter-spacing: 0.025em;
 }
 
+.coda-controls {
+  position: absolute;
+  top: clamp(1rem, 2.5vh, 2rem);
+  right: clamp(1rem, 2.5vw, 2.4rem);
+  display: flex;
+  gap: 0.38rem;
+  pointer-events: auto;
+}
+
+.coda-controls button {
+  min-height: 1.9rem;
+  padding: 0.28rem 0.58rem;
+  border: 1px solid rgb(240 238 230 / 13%);
+  border-radius: 999px;
+  color: rgb(240 238 230 / 64%);
+  background: rgb(14 23 26 / 58%);
+  font-family: "Bahnschrift", "Arial Narrow", sans-serif;
+  font-size: 0.68rem;
+  letter-spacing: 0.025em;
+  cursor: pointer;
+  backdrop-filter: blur(0.65rem);
+}
+
+.coda-controls button:hover,
+.coda-controls button:focus-visible {
+  border-color: rgb(143 198 188 / 62%);
+  color: #fffdf5;
+  outline: none;
+}
+
+.coda-controls button[aria-pressed="true"] {
+  color: #dff7f0;
+  background: rgb(70 115 108 / 54%);
+}
+
 .coda-presence[data-state="listening"] .coda-beacon,
 .coda-presence[data-state="wake-detected"] .coda-beacon {
   background: #8fc6bc;
@@ -179,7 +214,7 @@ button {
 }
 
 .coda-terminal {
-  top: clamp(1.2rem, 3vw, 2.8rem);
+  top: clamp(4.2rem, 8vw, 5.8rem);
   max-height: min(42vh, 22rem);
   overflow: auto;
   padding: 0.8rem 0.95rem;
@@ -257,6 +292,13 @@ button {
 
   .movement-hint {
     display: none;
+  }
+
+  .coda-controls {
+    left: 1rem;
+    right: 1rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 }
 
