@@ -3,7 +3,11 @@ import { WorkspaceSocket } from '../protocol/WorkspaceSocket.ts';
 import { WorldReplica } from '../replica/WorldReplica.ts';
 import { SceneReplicaSynchronizer } from '../replica/SceneReplicaSynchronizer.ts';
 import { WorkspaceScene } from '../rendering/WorkspaceScene.ts';
-import { WelcomeSequence } from '../onboarding/WelcomeSequence.ts';
+import { CodaPresence, type CodaState } from '../onboarding/CodaPresence.ts';
+import {
+  WorkspaceNativeBridge,
+  type WorkspaceNativeEnvelope,
+} from '../native/WorkspaceNativeBridge.ts';
 import {
   ProtocolSurfaceStream,
   ProtocolWindowInputSink,
@@ -37,6 +41,23 @@ export async function initializeWorkspaceConnection(socket: InitialSyncSocket): 
   await socket.sendCommand('application.list');
 }
 
+function payloadRecord(message: WorkspaceNativeEnvelope): Record<string, unknown> {
+  return typeof message.payload === 'object' && message.payload !== null
+    ? message.payload as Record<string, unknown>
+    : {};
+}
+
+const CODA_STATES = new Set<CodaState>([
+  'waiting',
+  'listening',
+  'wake-detected',
+  'thinking',
+  'speaking',
+  'working',
+  'needs-attention',
+  'mic-off',
+]);
+
 export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   const originalClassName = root.className;
   const originalTabIndex = root.getAttribute('tabindex');
@@ -61,17 +82,54 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   const synchronizer = new SceneReplicaSynchronizer(replica, scene);
 
   const unsubscribe = socket.subscribe((envelope) => synchronizer.apply(envelope));
+  const bridge = new WorkspaceNativeBridge();
+  const coda = new CodaPresence(root);
+  const unsubscribeNative = [
+    bridge.subscribe('voice.state', (message) => {
+      const state = payloadRecord(message).state;
+      if (typeof state === 'string' && CODA_STATES.has(state as CodaState)) {
+        coda.setState(state as CodaState);
+      }
+    }),
+    bridge.subscribe('voice.caption', (message) => {
+      const text = payloadRecord(message).text;
+      if (typeof text === 'string') coda.showCaption(text);
+    }),
+    bridge.subscribe('voice.transcript', (message) => {
+      const text = payloadRecord(message).text;
+      if (typeof text === 'string') coda.setTranscript(text);
+    }),
+    bridge.subscribe('agent.event', (message) => {
+      const payload = payloadRecord(message);
+      if (typeof payload.summary === 'string') coda.showCaption(payload.summary);
+      if (Array.isArray(payload.terminalEvents)) {
+        coda.setTerminalEvents(payload.terminalEvents.filter(
+          (event): event is string => typeof event === 'string',
+        ));
+      }
+      if (payload.level === 'error') coda.setState('needs-attention');
+    }),
+    bridge.subscribe('preference.changed', (message) => {
+      const payload = payloadRecord(message);
+      coda.setPreferences({
+        captionsEnabled: typeof payload.captionsEnabled === 'boolean'
+          ? payload.captionsEnabled
+          : undefined,
+        transcriptVisible: typeof payload.transcriptRetentionEnabled === 'boolean'
+          ? payload.transcriptRetentionEnabled
+          : undefined,
+      });
+    }),
+  ];
 
-  const welcome = new WelcomeSequence(root, {
-    onOpenApplication: async (displayName) => {
-      await socket.sendCommand('application.launch', displayName);
-    },
-  });
-
-  void initializeWorkspaceConnection(socket).catch((error) => {
-    const message = error instanceof Error ? error.message : String(error);
-    welcome.setStatus(`Windows Workspace Host is not connected. ${message}`, 'error');
-  });
+  void initializeWorkspaceConnection(socket)
+    .then(() => bridge.post('renderer.ready', { surface: 'spatial', version: 1 }))
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      coda.setState('needs-attention');
+      coda.showCaption(`Windows Workspace Host is not connected. ${message}`);
+      coda.setState('needs-attention');
+    });
 
   const reticle = document.createElement('div');
   reticle.className = 'reticle';
@@ -106,12 +164,14 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
 
   const reportInputError = (error: unknown): void => {
     const message = error instanceof Error ? error.message : String(error);
-    welcome.setStatus(`Windows rejected that surface input. ${message}`, 'error');
+    coda.showCaption(`Windows rejected that surface input. ${message}`);
+    coda.setState('needs-attention');
   };
 
   const reportPresentationError = (error: unknown): void => {
     const message = error instanceof Error ? error.message : String(error);
-    welcome.setStatus(`Placement was not saved and has been restored. ${message}`, 'error');
+    coda.showCaption(`Placement was not saved and has been restored. ${message}`);
+    coda.setState('needs-attention');
   };
 
   const onPointerDown = (event: PointerEvent): void => {
@@ -348,8 +408,10 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   return {
     destroy(): void {
       unsubscribe();
+      for (const unsubscribeMessage of unsubscribeNative) unsubscribeMessage();
       socket.close();
-      welcome.destroy();
+      bridge.destroy();
+      coda.destroy();
       scene.dispose();
       window.clearTimeout(arrivalTimer);
       root.removeEventListener('pointerdown', onPointerDown);

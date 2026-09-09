@@ -65,110 +65,142 @@ button {
   display: block;
 }
 
-.welcome-sequence {
+.coda-presence {
   position: absolute;
   z-index: 2;
-  top: clamp(2rem, 9vh, 7rem);
-  left: clamp(1.4rem, 7vw, 7.5rem);
-  width: min(36rem, calc(100vw - 2.8rem));
+  inset: 0;
   pointer-events: none;
-  text-wrap: pretty;
-  text-shadow: 0 0.12rem 1.4rem rgb(22 34 38 / 42%);
 }
 
-.welcome-sequence h1 {
-  max-width: 15ch;
-  margin: 0;
-  font-family: "Bahnschrift", "Arial Narrow", sans-serif;
-  font-size: clamp(2.25rem, 5.4vw, 5.4rem);
-  font-stretch: semi-condensed;
-  font-weight: 350;
-  line-height: 0.96;
-  letter-spacing: -0.04em;
-}
-
-.welcome-lead {
-  max-width: 37ch;
-  margin: 1.25rem 0 0;
-  font-family: "Bahnschrift", "Arial Narrow", sans-serif;
-  font-size: clamp(1.05rem, 1.7vw, 1.45rem);
-  font-weight: 350;
-  line-height: 1.3;
-}
-
-.welcome-orientation {
-  max-width: 55ch;
-  margin-top: clamp(1.4rem, 3vh, 2.5rem);
-  color: rgb(240 238 230 / 78%);
-  font-size: clamp(0.88rem, 1.1vw, 1.02rem);
-  line-height: 1.55;
-}
-
-.welcome-orientation p {
-  margin: 0 0 0.55rem;
-}
-
-.welcome-orientation p:nth-last-child(-n + 2) {
-  font-family: "Bahnschrift", "Arial Narrow", sans-serif;
-  color: #f0eee6;
-}
-
-.bring-application {
-  position: relative;
-  margin-top: clamp(1.1rem, 2.5vh, 2rem);
-  padding: 0.58rem 0.2rem 0.62rem 1.55rem;
-  border: 0;
-  border-bottom: 1px solid rgb(200 120 78 / 72%);
-  color: #f0eee6;
-  background: transparent;
-  font-family: "Bahnschrift", "Arial Narrow", sans-serif;
-  font-size: 1rem;
-  font-weight: 500;
-  cursor: pointer;
-  pointer-events: auto;
-}
-
-.bring-application::before {
+.coda-beacon {
   position: absolute;
-  top: 50%;
-  left: 0.18rem;
-  width: 0.62rem;
-  height: 0.62rem;
-  border: 1px solid #c8784e;
+  bottom: clamp(1.2rem, 3.2vh, 2.4rem);
+  left: clamp(1.25rem, 3.2vw, 3rem);
+  width: 0.72rem;
+  height: 0.72rem;
+  border: 1px solid rgb(240 238 230 / 72%);
   border-radius: 50%;
-  content: "";
-  transform: translateY(-50%);
+  background: rgb(38 55 59 / 72%);
+  box-shadow: 0 0 0 0.34rem rgb(38 55 59 / 60%), 0 0 1.5rem rgb(240 238 230 / 14%);
+  transition: background 180ms ease, box-shadow 180ms ease, transform 180ms ease;
 }
 
-.bring-application:hover::before,
-.bring-application:focus-visible::before {
+.coda-state-label {
+  position: absolute;
+  bottom: clamp(1.08rem, 3vh, 2.28rem);
+  left: clamp(2.5rem, calc(3.2vw + 1.4rem), 4.4rem);
+  color: rgb(240 238 230 / 58%);
+  font-family: "Bahnschrift", "Arial Narrow", sans-serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.025em;
+}
+
+.coda-presence[data-state="listening"] .coda-beacon,
+.coda-presence[data-state="wake-detected"] .coda-beacon {
+  background: #8fc6bc;
+  box-shadow: 0 0 0 0.36rem rgb(143 198 188 / 16%), 0 0 1.6rem rgb(143 198 188 / 70%);
+}
+
+.coda-presence[data-state="thinking"] .coda-beacon,
+.coda-presence[data-state="working"] .coda-beacon {
   background: #c8784e;
+  box-shadow: 0 0 0 0.36rem rgb(200 120 78 / 18%), 0 0 1.8rem rgb(200 120 78 / 72%);
+  animation: coda-breathe 1.5s ease-in-out infinite;
 }
 
-.bring-application:focus-visible {
-  outline: 2px solid #f0eee6;
-  outline-offset: 0.35rem;
+.coda-presence[data-state="speaking"] .coda-beacon {
+  background: #f0eee6;
+  box-shadow: 0 0 0 0.4rem rgb(240 238 230 / 13%), 0 0 1.9rem rgb(240 238 230 / 76%);
+  transform: scale(1.16);
 }
 
-.bring-application:disabled {
-  cursor: wait;
-  opacity: 0.55;
+.coda-presence[data-state="needs-attention"] .coda-beacon {
+  border-color: #ffd1bd;
+  background: #c8784e;
+  box-shadow: 0 0 1.8rem rgb(200 120 78 / 84%);
 }
 
-.welcome-status {
-  min-height: 1.4em;
-  margin: 0.85rem 0 0;
-  color: rgb(240 238 230 / 72%);
-  font-size: 0.82rem;
-  line-height: 1.4;
+.coda-presence[data-state="mic-off"] .coda-beacon {
+  opacity: 0.34;
 }
 
-.welcome-status[data-state="error"] {
-  color: #ffd1bd;
+.coda-caption {
+  position: absolute;
+  bottom: clamp(3.35rem, 7vh, 5.2rem);
+  left: 50%;
+  display: -webkit-box;
+  width: min(54rem, calc(100vw - 7rem));
+  max-height: 3.25em;
+  margin: 0;
+  overflow: hidden;
+  padding: 0.72rem 1.05rem 0.8rem;
+  border: 1px solid rgb(240 238 230 / 12%);
+  border-radius: 0.75rem;
+  color: #fffdf5;
+  background: rgb(14 23 26 / 78%);
+  box-shadow: 0 0.65rem 2.2rem rgb(7 15 17 / 30%);
+  font-size: clamp(0.96rem, 1.45vw, 1.18rem);
+  font-weight: 430;
+  line-height: 1.45;
+  text-align: center;
+  text-wrap: balance;
+  opacity: 0;
+  transform: translate(-50%, 0.4rem);
+  transition: opacity 180ms ease, transform 180ms ease;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
-.welcome-status[data-state="ready"] {
+.coda-caption[data-visible="true"] {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.coda-transcript,
+.coda-terminal {
+  position: absolute;
+  right: clamp(1.2rem, 3vw, 2.8rem);
+  width: min(28rem, calc(100vw - 2.4rem));
+  border: 1px solid rgb(240 238 230 / 10%);
+  border-radius: 0.7rem;
+  color: rgb(240 238 230 / 80%);
+  background: rgb(14 23 26 / 74%);
+  box-shadow: 0 0.8rem 2.4rem rgb(7 15 17 / 22%);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  pointer-events: auto;
+  user-select: text;
+}
+
+.coda-transcript {
+  bottom: 7.5rem;
+  padding: 0.75rem 0.9rem;
+}
+
+.coda-terminal {
+  top: clamp(1.2rem, 3vw, 2.8rem);
+  max-height: min(42vh, 22rem);
+  overflow: auto;
+  padding: 0.8rem 0.95rem;
+}
+
+.coda-terminal-heading {
+  margin: 0 0 0.55rem;
   color: #f0eee6;
+  font-family: "Bahnschrift", "Arial Narrow", sans-serif;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.coda-terminal ul {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+
+.coda-terminal li {
+  margin: 0.18rem 0;
 }
 
 .reticle {
@@ -201,28 +233,26 @@ button {
   pointer-events: none;
 }
 
-.workspace-arrival .welcome-sequence {
-  animation: arrive 900ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+@keyframes coda-breathe {
+  50% {
+    transform: scale(1.28);
+  }
 }
 
 @keyframes arrive {
   from {
     opacity: 0;
-    transform: translateY(0.7rem);
   }
 }
 
+.workspace-arrival .coda-presence {
+  animation: arrive 700ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
 @media (max-width: 640px), (max-height: 680px) {
-  .welcome-sequence {
-    top: 1.4rem;
-  }
-
-  .welcome-sequence h1 {
-    font-size: clamp(2rem, 10vw, 3.2rem);
-  }
-
-  .welcome-orientation p:first-child {
-    display: none;
+  .coda-caption {
+    bottom: 3.8rem;
+    width: calc(100vw - 2rem);
   }
 
   .movement-hint {
@@ -231,7 +261,9 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workspace-arrival .welcome-sequence {
+  .workspace-arrival .coda-presence,
+  .coda-presence[data-state="thinking"] .coda-beacon,
+  .coda-presence[data-state="working"] .coda-beacon {
     animation: none;
   }
 }
