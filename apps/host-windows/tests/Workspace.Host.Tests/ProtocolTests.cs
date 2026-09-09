@@ -32,6 +32,7 @@ public sealed class ProtocolTests : IDisposable
     [InlineData(null, true)]
     [InlineData("http://127.0.0.1:5173", true)]
     [InlineData("http://localhost:5173", true)]
+    [InlineData("https://workspace.local", true)]
     [InlineData("https://example.com", false)]
     [InlineData("null", false)]
     public void BrowserOriginsMustResolveToLoopback(string? origin, bool expected)
