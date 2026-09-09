@@ -4,6 +4,8 @@ import { WorldReplica } from '../replica/WorldReplica.ts';
 import { SceneReplicaSynchronizer } from '../replica/SceneReplicaSynchronizer.ts';
 import { WorkspaceScene } from '../rendering/WorkspaceScene.ts';
 import { CodaPresence, type CodaState } from '../onboarding/CodaPresence.ts';
+import { CameraNavigator } from '../navigation/CameraNavigator.ts';
+import { SceneCommandController } from '../navigation/SceneCommandController.ts';
 import {
   WorkspaceNativeBridge,
   type WorkspaceNativeEnvelope,
@@ -84,6 +86,14 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   const unsubscribe = socket.subscribe((envelope) => synchronizer.apply(envelope));
   const bridge = new WorkspaceNativeBridge();
   const coda = new CodaPresence(root);
+  let selectedEntityId: string | null = null;
+  const navigator = new CameraNavigator(scene);
+  const sceneCommands = new SceneCommandController(
+    scene,
+    navigator,
+    () => selectedEntityId,
+    scene.getCameraPose(),
+  );
   const unsubscribeNative = [
     bridge.subscribe('voice.state', (message) => {
       const state = payloadRecord(message).state;
@@ -118,6 +128,11 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
         transcriptVisible: typeof payload.transcriptRetentionEnabled === 'boolean'
           ? payload.transcriptRetentionEnabled
           : undefined,
+      });
+    }),
+    bridge.subscribe('scene.command', (message) => {
+      void sceneCommands.handle(message.payload).then((result) => {
+        bridge.post('scene.command.result', result);
       });
     }),
   ];
@@ -176,6 +191,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
 
   const onPointerDown = (event: PointerEvent): void => {
     if (event.target instanceof Element && event.target.closest('button')) return;
+    sceneCommands.cancel('manual-pointer');
     const button: PointerButton | null = event.button === 0
       ? 'primary'
       : event.button === 2
@@ -184,6 +200,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     const hit = button ? scene.hitTestApplicationSurface(event.clientX, event.clientY) : null;
     if (hit && button === 'primary' && event.altKey) {
       selectedSurface = hit.surface;
+      selectedEntityId = hit.entityId;
       root.classList.add('has-selected-surface', 'is-presentation-drag');
       presentationDrag = {
         pointerId: event.pointerId,
@@ -200,6 +217,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     }
     if (hit && button) {
       selectedSurface = hit.surface;
+      selectedEntityId = hit.entityId;
       root.classList.add('has-selected-surface');
       surfacePointer = {
         pointerId: event.pointerId,
@@ -216,6 +234,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     }
 
     selectedSurface = null;
+    selectedEntityId = null;
     root.classList.remove('has-selected-surface');
     pointerId = event.pointerId;
     lastX = event.clientX;
@@ -264,7 +283,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       return;
     }
     if (event.pointerId !== pointerId) return;
-    scene.lookBy(event.clientX - lastX, event.clientY - lastY);
+    sceneCommands.manualLook(event.clientX - lastX, event.clientY - lastY);
     lastX = event.clientX;
     lastY = event.clientY;
   };
@@ -306,7 +325,9 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   const onWheel = (event: WheelEvent): void => {
     const hit = scene.hitTestApplicationSurface(event.clientX, event.clientY);
     if (!hit) return;
+    sceneCommands.cancel('manual-wheel');
     selectedSurface = hit.surface;
+    selectedEntityId = hit.entityId;
     root.classList.add('has-selected-surface');
     event.preventDefault();
     void hit.surface.wheel(hit.u, hit.v, event.deltaX, event.deltaY).catch(reportInputError);
@@ -318,6 +339,15 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
 
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.target instanceof HTMLButtonElement) return;
+    if (event.key === 'Escape') {
+      sceneCommands.cancel('manual-escape');
+      selectedSurface = null;
+      selectedEntityId = null;
+      root.classList.remove('has-selected-surface');
+      event.preventDefault();
+      return;
+    }
+    sceneCommands.cancel('manual-keyboard');
     if (selectedSurface && event.altKey && event.key.startsWith('Arrow')) {
       suppressedKeyReleases.reserve(event.key);
       event.preventDefault();
@@ -372,7 +402,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     const direction = movement[key];
     if (!direction) return;
     event.preventDefault();
-    scene.move(...direction);
+    sceneCommands.manualMove(...direction);
   };
 
   const onKeyUp = (event: KeyboardEvent): void => {
@@ -400,6 +430,15 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   root.addEventListener('keyup', onKeyUp);
   root.focus({ preventScroll: true });
 
+  let previousFrame = performance.now();
+  let navigationFrame = 0;
+  const tickNavigation = (now: number): void => {
+    sceneCommands.tick(now - previousFrame);
+    previousFrame = now;
+    navigationFrame = window.requestAnimationFrame(tickNavigation);
+  };
+  navigationFrame = window.requestAnimationFrame(tickNavigation);
+
   const arrivalTimer = window.setTimeout(
     () => root.classList.remove('workspace-arrival'),
     1200,
@@ -414,6 +453,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       coda.destroy();
       scene.dispose();
       window.clearTimeout(arrivalTimer);
+      window.cancelAnimationFrame(navigationFrame);
       root.removeEventListener('pointerdown', onPointerDown);
       root.removeEventListener('pointermove', onPointerMove);
       root.removeEventListener('pointerup', endLook);

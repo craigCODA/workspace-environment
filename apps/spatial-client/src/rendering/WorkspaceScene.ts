@@ -1,6 +1,8 @@
 import * as THREE from 'three';
-import type { WorkspaceEntity } from '@workspace/world-schema';
+import type { PresentationState, WorkspaceEntity } from '@workspace/world-schema';
 import { RendererRegistry } from './RendererRegistry.ts';
+import type { CameraPose } from '../navigation/CameraNavigator.ts';
+import type { SceneSnapshot } from '../navigation/SceneCommandController.ts';
 import type { SurfaceStream, WindowInputSink } from '../surfaces/SurfaceStream.ts';
 import {
   ApplicationSurface,
@@ -37,6 +39,7 @@ export function calculatePlanarMovement(
 }
 
 export type ApplicationSurfaceHit = Readonly<{
+  entityId: string;
   surface: ApplicationSurface;
   u: number;
   v: number;
@@ -52,6 +55,7 @@ export class WorkspaceScene {
   readonly #presentationSinkFactory: ((entityId: string) => PresentationSink) | null;
   readonly #raycaster = new THREE.Raycaster();
   readonly #entities = new Map<string, THREE.Object3D>();
+  readonly #entityStates = new Map<string, WorkspaceEntity>();
   readonly #resizeObserver: ResizeObserver;
   #yaw = 0;
   #pitch = 0;
@@ -104,10 +108,12 @@ export class WorkspaceScene {
   }
 
   upsert(entity: WorkspaceEntity): void {
+    this.#entityStates.set(entity.id, entity);
     let object = this.#entities.get(entity.id);
     if (!object) {
       object = this.#createEntityObject(entity);
       object.name = `entity:${entity.id}`;
+      object.userData.entityId = entity.id;
       this.#entities.set(entity.id, object);
       this.#scene.add(object);
     }
@@ -145,6 +151,55 @@ export class WorkspaceScene {
       }
     });
     this.#entities.delete(entityId);
+    this.#entityStates.delete(entityId);
+  }
+
+  getCameraPose(): CameraPose {
+    return {
+      position: {
+        x: this.#camera.position.x,
+        y: this.#camera.position.y,
+        z: this.#camera.position.z,
+      },
+      yaw: this.#yaw,
+      pitch: this.#pitch,
+    };
+  }
+
+  setCameraPose(pose: CameraPose): void {
+    this.#camera.position.set(pose.position.x, pose.position.y, pose.position.z);
+    this.#yaw = pose.yaw;
+    this.#pitch = THREE.MathUtils.clamp(pose.pitch, -Math.PI * 0.42, Math.PI * 0.42);
+    this.#camera.rotation.set(this.#pitch, this.#yaw, 0);
+  }
+
+  snapshot(selectedEntityId: string | null = null): SceneSnapshot {
+    return {
+      camera: this.getCameraPose(),
+      entities: [...this.#entityStates.values()].map((entity) => ({
+        id: entity.id,
+        kind: entity.kind,
+        name: entity.name,
+        presentation: this.presentationFor(entity.id) ?? entity.presentation,
+        selected: entity.id === selectedEntityId,
+      })),
+    };
+  }
+
+  presentationFor(entityId: string): PresentationState | null {
+    const object = this.#entities.get(entityId);
+    const surface = object?.userData.applicationSurface;
+    if (surface instanceof ApplicationSurface) return surface.displayedPresentation;
+    return this.#entityStates.get(entityId)?.presentation ?? null;
+  }
+
+  async commitPresentation(entityId: string, presentation: PresentationState): Promise<void> {
+    const object = this.#entities.get(entityId);
+    const surface = object?.userData.applicationSurface;
+    if (!(surface instanceof ApplicationSurface)) {
+      throw new Error(`Entity is not a controllable application surface: ${entityId}`);
+    }
+    await surface.commitPresentation(presentation);
   }
 
   lookBy(deltaX: number, deltaY: number): void {
@@ -184,7 +239,9 @@ export class WorkspaceScene {
         const surface = object.userData.applicationSurface;
         if (surface instanceof ApplicationSurface && intersection.uv) {
           if (requiredSurface && surface !== requiredSurface) break;
-          return { surface, u: intersection.uv.x, v: intersection.uv.y };
+          const entityId = this.#entityIdForObject(object);
+          if (!entityId) break;
+          return { entityId, surface, u: intersection.uv.x, v: intersection.uv.y };
         }
         object = object.parent;
       }
@@ -280,6 +337,15 @@ export class WorkspaceScene {
     thresholdLight.position.set(0, 1.25, 0.2);
     workArea.add(thresholdLight);
     this.#scene.add(workArea);
+  }
+
+  #entityIdForObject(object: THREE.Object3D): string | null {
+    let current: THREE.Object3D | null = object;
+    while (current) {
+      if (typeof current.userData.entityId === 'string') return current.userData.entityId;
+      current = current.parent;
+    }
+    return null;
   }
 
   #createEntityObject(entity: WorkspaceEntity): THREE.Object3D {
