@@ -4,11 +4,13 @@ Workspace Environment is a Windows-first spatial workspace where the PC remains 
 
 V0 proves one complete path: discover an installed application, launch its ordinary Windows process, resolve its top-level window, capture it as a live Three.js surface, route input back to it, move and resize the spatial representation, and restore that representation after transient PID/HWND replacement.
 
-The canonical design and implementation plan are:
+The canonical designs and implementation plans are:
 
 - `docs/superpowers/specs/2026-09-07-workspace-environment-design.md`
 - `docs/superpowers/plans/2026-09-07-v0-real-app-spatial-surface.md`
 - [V0 acceptance record](docs/v0-acceptance.md)
+- [Voice-first Coda design](docs/superpowers/specs/2026-09-09-voice-first-coda-workspace-design.md)
+- [Voice-first Coda acceptance record](docs/voice-first-coda-acceptance.md)
 
 ## Prerequisites
 
@@ -18,6 +20,25 @@ The canonical design and implementation plan are:
 - Microsoft Edge for the human acceptance path
 
 The installed application includes its own Electron runtime, production spatial client, and self-contained .NET host. It does not require Node.js, npm, the .NET runtime, or Vite on the target machine.
+
+The native preview also needs the Codex CLI signed in with a ChatGPT subscription. It does not request an OpenAI API key. Speech recognition, the `Hey Coda` wake phrase, and speech synthesis run through local Windows speech services.
+
+## Native voice-first preview
+
+Build, stage, install, and launch the side-by-side native preview:
+
+```powershell
+npm install
+npm run native:test
+npm run native:build
+npm run native:install
+```
+
+This creates **Workspace Environment Native Preview** shortcuts without changing or deleting the existing Electron installation. Versioned builds live under `%LOCALAPPDATA%\WorkspaceEnvironment\versions`; the stable launcher promotes a pending build only after its health handshake and rolls back to the last known-good version if validation or startup fails.
+
+On first launch, Coda speaks the welcome while synchronized captions appear at the bottom, then asks what to call you. Later launches say `Welcome back, <name>.` After that, ambient speech is ignored until `Hey Coda` is detected. Microphone, captions, transcript display, activity, proactive alerts, and navigation policy remain directly controllable in the workspace.
+
+Coda can inspect structured scene state, guide the camera, focus named surfaces, move or resize surfaces, run builds, and request a restart. Approval prompts accept `allow once`, `remember this`, or `deny`. Remembered permissions are exact and project-scoped; credentials, remote publication, system configuration, and destructive work outside the workspace always require fresh confirmation.
 
 ## Windows installer
 
@@ -35,7 +56,7 @@ dist\Workspace Environment Setup 0.1.0.exe
 dist\win-unpacked\Workspace Environment.exe
 ```
 
-The one-click installer is per-user and requires no administrator prompt. Launching **Workspace Environment** automatically starts the bundled Windows host and opens the existing Three.js environment. The current build is unsigned, so Windows SmartScreen may display `Unknown publisher`.
+The Electron one-click installer remains the rollback package. It is per-user and requires no administrator prompt. Launching **Workspace Environment** automatically starts the bundled Windows host and opens the existing Three.js environment. The current build is unsigned, so Windows SmartScreen may display `Unknown publisher`.
 
 ## Run from source through Electron
 
@@ -83,9 +104,11 @@ npm test
 npm run typecheck
 npm run build
 dotnet test apps/host-windows/Workspace.Host.sln --configuration Release
+npm run native:test
+npm run native:build
 npm run dist:win
 ```
 
 The solution includes `Workspace.TestWindow`, an ordinary first-party WinForms application with a changing visual indicator, text input, counter button, and scrollable region. It has no private host backchannel and is used as a deterministic real-window acceptance target.
 
-V0 does not yet provide multi-window role reconciliation beyond one durable main window per application, elevated-application input, Quest/WebXR, remote streaming, agent/MCP control, automatic updates, code signing, or the broader file/project/process semantic model.
+Current boundaries include multi-window role reconciliation beyond one durable main window per application, elevated-application input, Quest/WebXR, remote streaming, code signing, and the broader file/project/process semantic model. Native Coda is a local preview and the Electron package remains installed as the known fallback.

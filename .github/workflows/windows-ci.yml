@@ -48,6 +48,14 @@ jobs:
         shell: pwsh
         run: dotnet test apps/host-windows/Workspace.Host.sln --configuration Release
 
+      - name: Test native Coda core
+        shell: pwsh
+        run: npm run native:test
+
+      - name: Build native Windows preview
+        shell: pwsh
+        run: npm run native:build
+
       - name: Build Windows installer
         shell: pwsh
         run: npm run dist:win

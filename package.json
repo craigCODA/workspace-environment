@@ -17,7 +17,11 @@
     "electron": "npm run build --workspace @workspace/spatial-client && electron .",
     "prepare:desktop": "node scripts/prepare-desktop.mjs",
     "dist:dir": "npm run prepare:desktop && electron-builder --dir --win --x64",
-    "dist:win": "npm run prepare:desktop && electron-builder --win nsis --x64"
+    "dist:win": "npm run prepare:desktop && electron-builder --win nsis --x64",
+    "native:test": "dotnet test apps/desktop-native/tests/Workspace.Desktop.Core.Tests/Workspace.Desktop.Core.Tests.csproj --configuration Release",
+    "native:build": "npm run build --workspace @workspace/spatial-client && dotnet build apps/desktop-native/Workspace.Desktop.sln --configuration Release --property:Platform=x64",
+    "native:stage": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-native-desktop.ps1 -Configuration Release",
+    "native:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-native-preview.ps1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
