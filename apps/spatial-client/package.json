@@ -1,0 +1,21 @@
+{
+  "name": "@workspace/spatial-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "test": "node --experimental-strip-types --test src/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@workspace/protocol": "*",
+    "@workspace/world-schema": "*",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.4",
+    "vite": "^8.2.2"
+  }
+}

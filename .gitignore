@@ -1,4 +1,5 @@
 .worktrees/
+.desktop-build/
 node_modules/
 **/dist/
 **/bin/

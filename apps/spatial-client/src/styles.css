@@ -1,0 +1,237 @@
+:root {
+  color: #f0eee6;
+  background: #26373b;
+  font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  min-width: 320px;
+}
+
+button {
+  font: inherit;
+}
+
+.workspace-root {
+  position: relative;
+  isolation: isolate;
+  outline: none;
+  cursor: grab;
+  user-select: none;
+  background: #26373b;
+}
+
+.workspace-root:focus-visible {
+  box-shadow: inset 0 0 0 2px rgb(240 238 230 / 72%);
+}
+
+.workspace-root.is-looking {
+  cursor: grabbing;
+}
+
+.workspace-root.has-selected-surface,
+.workspace-root.is-surface-input {
+  cursor: default;
+}
+
+.workspace-root.is-presentation-drag {
+  cursor: move;
+}
+
+.scene-root,
+.workspace-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.workspace-canvas {
+  display: block;
+}
+
+.welcome-sequence {
+  position: absolute;
+  z-index: 2;
+  top: clamp(2rem, 9vh, 7rem);
+  left: clamp(1.4rem, 7vw, 7.5rem);
+  width: min(36rem, calc(100vw - 2.8rem));
+  pointer-events: none;
+  text-wrap: pretty;
+  text-shadow: 0 0.12rem 1.4rem rgb(22 34 38 / 42%);
+}
+
+.welcome-sequence h1 {
+  max-width: 15ch;
+  margin: 0;
+  font-family: "Bahnschrift", "Arial Narrow", sans-serif;
+  font-size: clamp(2.25rem, 5.4vw, 5.4rem);
+  font-stretch: semi-condensed;
+  font-weight: 350;
+  line-height: 0.96;
+  letter-spacing: -0.04em;
+}
+
+.welcome-lead {
+  max-width: 37ch;
+  margin: 1.25rem 0 0;
+  font-family: "Bahnschrift", "Arial Narrow", sans-serif;
+  font-size: clamp(1.05rem, 1.7vw, 1.45rem);
+  font-weight: 350;
+  line-height: 1.3;
+}
+
+.welcome-orientation {
+  max-width: 55ch;
+  margin-top: clamp(1.4rem, 3vh, 2.5rem);
+  color: rgb(240 238 230 / 78%);
+  font-size: clamp(0.88rem, 1.1vw, 1.02rem);
+  line-height: 1.55;
+}
+
+.welcome-orientation p {
+  margin: 0 0 0.55rem;
+}
+
+.welcome-orientation p:nth-last-child(-n + 2) {
+  font-family: "Bahnschrift", "Arial Narrow", sans-serif;
+  color: #f0eee6;
+}
+
+.bring-application {
+  position: relative;
+  margin-top: clamp(1.1rem, 2.5vh, 2rem);
+  padding: 0.58rem 0.2rem 0.62rem 1.55rem;
+  border: 0;
+  border-bottom: 1px solid rgb(200 120 78 / 72%);
+  color: #f0eee6;
+  background: transparent;
+  font-family: "Bahnschrift", "Arial Narrow", sans-serif;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.bring-application::before {
+  position: absolute;
+  top: 50%;
+  left: 0.18rem;
+  width: 0.62rem;
+  height: 0.62rem;
+  border: 1px solid #c8784e;
+  border-radius: 50%;
+  content: "";
+  transform: translateY(-50%);
+}
+
+.bring-application:hover::before,
+.bring-application:focus-visible::before {
+  background: #c8784e;
+}
+
+.bring-application:focus-visible {
+  outline: 2px solid #f0eee6;
+  outline-offset: 0.35rem;
+}
+
+.bring-application:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.welcome-status {
+  min-height: 1.4em;
+  margin: 0.85rem 0 0;
+  color: rgb(240 238 230 / 72%);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.welcome-status[data-state="error"] {
+  color: #ffd1bd;
+}
+
+.welcome-status[data-state="ready"] {
+  color: #f0eee6;
+}
+
+.reticle {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 50%;
+  width: 0.42rem;
+  height: 0.42rem;
+  border: 1px solid rgb(240 238 230 / 52%);
+  border-radius: 50%;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.workspace-root.has-selected-surface .reticle {
+  border-color: #c8784e;
+  box-shadow: 0 0 0.75rem rgb(200 120 78 / 82%);
+}
+
+.movement-hint {
+  position: absolute;
+  z-index: 2;
+  right: clamp(1.2rem, 3vw, 2.8rem);
+  bottom: clamp(1.15rem, 3vh, 2.2rem);
+  margin: 0;
+  color: rgb(240 238 230 / 58%);
+  font-family: "Bahnschrift", "Arial Narrow", sans-serif;
+  font-size: 0.78rem;
+  pointer-events: none;
+}
+
+.workspace-arrival .welcome-sequence {
+  animation: arrive 900ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(0.7rem);
+  }
+}
+
+@media (max-width: 640px), (max-height: 680px) {
+  .welcome-sequence {
+    top: 1.4rem;
+  }
+
+  .welcome-sequence h1 {
+    font-size: clamp(2rem, 10vw, 3.2rem);
+  }
+
+  .welcome-orientation p:first-child {
+    display: none;
+  }
+
+  .movement-hint {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-arrival .welcome-sequence {
+    animation: none;
+  }
+}

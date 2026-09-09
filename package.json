@@ -1,0 +1,76 @@
+{
+  "name": "workspace-environment",
+  "version": "0.1.0",
+  "description": "A persistent spatial interpretation of the Windows workspace.",
+  "author": "CraigCODA",
+  "private": true,
+  "main": "apps/desktop-shell/main.cjs",
+  "workspaces": [
+    "apps/spatial-client",
+    "packages/*"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/ensure-electron.mjs",
+    "test": "node --test apps/desktop-shell/test/desktop-shell.test.cjs scripts/desktop-build-command.test.mjs && npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "electron": "npm run build --workspace @workspace/spatial-client && electron .",
+    "prepare:desktop": "node scripts/prepare-desktop.mjs",
+    "dist:dir": "npm run prepare:desktop && electron-builder --dir --win --x64",
+    "dist:win": "npm run prepare:desktop && electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.9.2"
+  },
+  "build": {
+    "appId": "com.nerdlife.workspaceenvironment",
+    "productName": "Workspace Environment",
+    "asar": true,
+    "npmRebuild": false,
+    "compression": "normal",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "apps/desktop-shell/**/*.cjs",
+      "!apps/desktop-shell/test/**"
+    ],
+    "extraResources": [
+      {
+        "from": "apps/spatial-client/dist",
+        "to": "spatial-client"
+      },
+      {
+        "from": ".desktop-build/host",
+        "to": "host"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Workspace Environment",
+      "runAfterFinish": true,
+      "artifactName": "Workspace Environment Setup ${version}.${ext}"
+    }
+  },
+  "allowScripts": {
+    "electron@44.3.0": true,
+    "electron-winstaller@5.4.0": true
+  }
+}

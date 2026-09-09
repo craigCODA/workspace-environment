@@ -28,7 +28,7 @@ jobs:
       - name: Test TypeScript workspaces
         if: ${{ hashFiles('package.json') != '' }}
         shell: pwsh
-        run: npm test --workspaces --if-present
+        run: npm test
 
       - name: Typecheck TypeScript workspaces
         if: ${{ hashFiles('package.json') != '' }}
@@ -45,3 +45,14 @@ jobs:
         if: ${{ hashFiles('apps/host-windows/Workspace.Host.sln') != '' }}
         shell: pwsh
         run: dotnet test apps/host-windows/Workspace.Host.sln --configuration Release
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: npm run dist:win
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-environment-windows-installer
+          path: dist/Workspace Environment Setup 0.1.0.exe
+          if-no-files-found: error
