@@ -67,7 +67,7 @@ Voice is defined behind replaceable interfaces:
 - `ISpeechSynthesizer`
 - `IVoiceConversationController`
 
-The first implementation uses a lightweight local recognizer for continuous wake-word detection, a local Whisper-compatible recognizer for technical dictation, and Windows speech synthesis for output. Model/runtime assets are installed locally and versioned independently from the application. No audio request is sent to an OpenAI API.
+The first implementation uses the installed Windows speech recognizer for continuous wake-word detection and dictation, plus Windows speech synthesis for output. The recognizer interface is intentionally compatible with a later local Whisper-based adapter when higher technical-dictation accuracy justifies shipping model assets. No audio request is sent to an OpenAI API.
 
 The conversation controller coordinates wake state, active listening, silence timeout, partial and final transcripts, barge-in, caption timing, speech queues, and failure recovery. Device selection and recognition language are persisted user preferences.
 
