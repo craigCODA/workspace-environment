@@ -76,12 +76,9 @@ test('WorkspaceScene uses window factories for capture/input and its surface for
   });
   scene.upsert(make('pc.window:notepad'));
   await new Promise<void>((done) => queueMicrotask(done));
-
   assert.deepEqual(scene.snapshot('spatial.surface:right').entities[0]?.relationships, [
     { type: 'displays', targetId: 'pc.window:notepad' },
   ]);
-
-
   scene.upsert(make('pc.window:terminal'));
   await new Promise<void>((done) => queueMicrotask(done));
   scene.dispose();
