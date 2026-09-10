@@ -40,6 +40,69 @@ public sealed class PersistenceTests : IDisposable
     }
 
     [Fact]
+    public void Migration_creates_one_surface_and_preserves_window_placement()
+    {
+        var window = WorkspaceEntity.CreateWindow("pc.window:edge", "Edge", "pc.application:edge") with
+        {
+            Presentation = PresentationState.Default with { Position = new Vec3(4.2, 1.4, -3) },
+        };
+
+        var migrated = new WorkspaceDocument(1, [window]).MigrateToCurrent();
+        var surface = Assert.Single(migrated.Entities, entity => entity.Kind == EntityKinds.Surface);
+
+        Assert.Equal(new Vec3(4.2, 1.4, -3), surface.Presentation.Position);
+        Assert.Contains(surface.Relationships, relationship =>
+            relationship.Type == "displays" && relationship.TargetId == window.Id);
+        Assert.Single(migrated.MigrateToCurrent().Entities, entity => entity.Kind == EntityKinds.Surface);
+    }
+
+    [Fact]
+    public void Bind_window_replaces_only_the_display_relationship()
+    {
+        var first = WorkspaceEntity.CreateWindow("pc.window:first", "First", "pc.application:first");
+        var second = WorkspaceEntity.CreateWindow("pc.window:second", "Second", "pc.application:second");
+        var surface = WorkspaceEntity.CreateDisplaySurface(
+            "spatial.surface:desk",
+            "Desk",
+            PresentationState.Default,
+            first.Id) with
+        {
+            Relationships =
+            [
+                new Relationship("owned-by", "workspace.place:desk"),
+                new Relationship("displays", first.Id),
+            ],
+        };
+        var document = new WorkspaceDocument(2, [first, second, surface]);
+
+        Assert.True(document.TryBindWindow(surface.Id, second.Id, out var updated));
+        Assert.Contains(updated!.Relationships, relationship =>
+            relationship.Type == "displays" && relationship.TargetId == second.Id);
+        Assert.DoesNotContain(updated.Relationships, relationship =>
+            relationship.Type == "displays" && relationship.TargetId == first.Id);
+        Assert.Contains(updated.Relationships, relationship =>
+            relationship.Type == "owned-by" && relationship.TargetId == "workspace.place:desk");
+    }
+
+    [Fact]
+    public void Bind_window_rejects_invalid_entities_without_changing_the_surface()
+    {
+        var window = WorkspaceEntity.CreateWindow("pc.window:edge", "Edge", "pc.application:edge");
+        var surface = WorkspaceEntity.CreateDisplaySurface(
+            "spatial.surface:desk",
+            "Desk",
+            PresentationState.Default,
+            window.Id);
+        var document = new WorkspaceDocument(2, [window, surface]);
+
+        Assert.False(document.TryBindWindow(surface.Id, "missing-window", out var updated));
+        Assert.Null(updated);
+        Assert.Same(surface, Assert.Single(document.Entities, entity => entity.Id == surface.Id));
+        Assert.Contains(surface.Relationships, relationship =>
+            relationship.Type == "displays" && relationship.TargetId == window.Id);
+    }
+
+    [Fact]
     public async Task PresentationSurvivesHostRestartAndRebindsToANewHwnd()
     {
         const string applicationId = "pc.application:workspace-test";

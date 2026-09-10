@@ -11,4 +11,5 @@ public static class EntityKinds
     public const string Project = "workspace.project";
     public const string Terminal = "workspace.terminal";
     public const string Place = "workspace.place";
+    public const string Surface = "spatial.surface";
 }

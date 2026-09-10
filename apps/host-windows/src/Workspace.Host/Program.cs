@@ -27,6 +27,7 @@ var store = new AtomicWorkspaceStore(Path.Combine(
     localData,
     "WorkspaceEnvironment",
     "workspace.json"));
+await WorkspaceMigrator.EnsureCurrentAsync(store, CancellationToken.None);
 var applicationProfileStore = new AtomicApplicationProfileStore(Path.Combine(
     localData,
     "WorkspaceEnvironment",

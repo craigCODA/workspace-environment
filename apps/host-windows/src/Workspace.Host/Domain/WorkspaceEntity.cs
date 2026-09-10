@@ -52,4 +52,25 @@ public sealed record WorkspaceEntity(
                 Representation = "application-surface",
             });
     }
+
+    public static WorkspaceEntity CreateDisplaySurface(
+        string id,
+        string name,
+        PresentationState presentation,
+        string? windowId = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(presentation);
+
+        return new WorkspaceEntity(
+            id,
+            EntityKinds.Surface,
+            name,
+            [],
+            string.IsNullOrWhiteSpace(windowId) ? [] : [new Relationship("displays", windowId)],
+            ["bindWindow", "setPresentation", "select"],
+            null,
+            presentation);
+    }
 }

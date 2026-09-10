@@ -6,6 +6,8 @@ namespace Workspace.Host.Persistence;
 
 public sealed class WorkspaceDocument : IEquatable<WorkspaceDocument>
 {
+    public const int CurrentSchemaVersion = 2;
+
     public WorkspaceDocument(int schemaVersion, List<WorkspaceEntity> entities)
     {
         SchemaVersion = schemaVersion;
@@ -16,7 +18,9 @@ public sealed class WorkspaceDocument : IEquatable<WorkspaceDocument>
 
     public List<WorkspaceEntity> Entities { get; init; }
 
-    public static WorkspaceDocument Empty => new(1, []);
+    public static WorkspaceDocument Empty => new(CurrentSchemaVersion, []);
+
+    public WorkspaceDocument MigrateToCurrent() => WorkspaceMigrator.MigrateToCurrent(this);
 
     public bool TrySetPresentation(
         string entityId,
@@ -36,6 +40,40 @@ public sealed class WorkspaceDocument : IEquatable<WorkspaceDocument>
 
         updated = Entities[index] with { Presentation = presentation };
         Entities[index] = updated;
+        return true;
+    }
+
+    public bool TryBindWindow(
+        string surfaceId,
+        string windowId,
+        out WorkspaceEntity? updated)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(surfaceId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(windowId);
+
+        var surfaceIndex = Entities.FindIndex(entity =>
+            string.Equals(entity.Id, surfaceId, StringComparison.Ordinal));
+        var window = Entities.FirstOrDefault(entity =>
+            string.Equals(entity.Id, windowId, StringComparison.Ordinal));
+
+        if (surfaceIndex < 0
+            || Entities[surfaceIndex].Kind != EntityKinds.Surface
+            || window?.Kind != EntityKinds.Window)
+        {
+            updated = null;
+            return false;
+        }
+
+        var surface = Entities[surfaceIndex];
+        updated = surface with
+        {
+            Relationships =
+            [
+                .. surface.Relationships.Where(relationship => relationship.Type != "displays"),
+                new Relationship("displays", window.Id),
+            ],
+        };
+        Entities[surfaceIndex] = updated;
         return true;
     }
 
