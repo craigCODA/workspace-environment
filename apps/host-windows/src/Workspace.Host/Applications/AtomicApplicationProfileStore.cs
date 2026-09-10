@@ -7,6 +7,7 @@ public sealed class AtomicApplicationProfileStore : IApplicationProfileStore
     private const int SchemaVersion = 1;
     private const int MaximumArgumentCount = 64;
     private const int MaximumArgumentLength = 4_096;
+    private static readonly StringComparer ProfileIdComparer = StringComparer.OrdinalIgnoreCase;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
@@ -24,7 +25,7 @@ public sealed class AtomicApplicationProfileStore : IApplicationProfileStore
     {
         var document = await LoadDocumentAsync(cancellationToken);
         return document.Profiles
-            .OrderBy(profile => profile.Id, StringComparer.Ordinal)
+            .OrderBy(profile => profile.Id, ProfileIdComparer)
             .ToArray();
     }
 
@@ -32,8 +33,7 @@ public sealed class AtomicApplicationProfileStore : IApplicationProfileStore
     {
         ValidateRequiredId(profileId, nameof(profileId));
         var document = await LoadDocumentAsync(cancellationToken);
-        return document.Profiles.SingleOrDefault(profile =>
-            string.Equals(profile.Id, profileId, StringComparison.Ordinal));
+        return document.Profiles.FirstOrDefault(profile => ProfileIdComparer.Equals(profile.Id, profileId));
     }
 
     public async Task SaveAsync(ApplicationLaunchProfile profile, CancellationToken cancellationToken)
@@ -43,9 +43,9 @@ public sealed class AtomicApplicationProfileStore : IApplicationProfileStore
 
         var document = await LoadDocumentAsync(cancellationToken);
         var profiles = document.Profiles
-            .Where(existing => !string.Equals(existing.Id, profile.Id, StringComparison.Ordinal))
+            .Where(existing => !ProfileIdComparer.Equals(existing.Id, profile.Id))
             .Append(profile)
-            .OrderBy(existing => existing.Id, StringComparer.Ordinal)
+            .OrderBy(existing => existing.Id, ProfileIdComparer)
             .ToList();
         await SaveDocumentAsync(new ApplicationProfileDocument(SchemaVersion, profiles), cancellationToken);
     }
@@ -55,7 +55,7 @@ public sealed class AtomicApplicationProfileStore : IApplicationProfileStore
         ValidateRequiredId(profileId, nameof(profileId));
         var document = await LoadDocumentAsync(cancellationToken);
         var profiles = document.Profiles
-            .Where(profile => !string.Equals(profile.Id, profileId, StringComparison.Ordinal))
+            .Where(profile => !ProfileIdComparer.Equals(profile.Id, profileId))
             .ToList();
         if (profiles.Count == document.Profiles.Count)
         {
@@ -80,22 +80,24 @@ public sealed class AtomicApplicationProfileStore : IApplicationProfileStore
             FileShare.Read,
             4096,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
-        var document = await JsonSerializer.DeserializeAsync<ApplicationProfileDocument>(
-            stream,
-            JsonOptions,
-            cancellationToken)
-            ?? throw new InvalidDataException($"Application profile document '{_path}' was empty or invalid.");
-        if (document.Version != SchemaVersion || document.Profiles is null)
+        try
         {
-            throw new InvalidDataException($"Application profile document '{_path}' has an unsupported schema.");
+            var document = await JsonSerializer.DeserializeAsync<ApplicationProfileDocument>(
+                stream,
+                JsonOptions,
+                cancellationToken)
+                ?? throw new InvalidDataException($"Application profile document '{_path}' was empty or invalid.");
+            ValidateDocument(document);
+            return document;
         }
-
-        foreach (var profile in document.Profiles)
+        catch (JsonException exception)
         {
-            ValidateProfile(profile);
+            throw new InvalidDataException($"Application profile document '{_path}' was malformed.", exception);
         }
-
-        return document;
+        catch (ArgumentException exception)
+        {
+            throw new InvalidDataException($"Application profile document '{_path}' was invalid.", exception);
+        }
     }
 
     private async Task SaveDocumentAsync(
@@ -180,6 +182,44 @@ public sealed class AtomicApplicationProfileStore : IApplicationProfileStore
         if (profile.PreferredSurfaceId is not null)
         {
             ValidateRequiredId(profile.PreferredSurfaceId, nameof(profile.PreferredSurfaceId));
+        }
+
+        if (profile.PreferredPresentation is { } presentation)
+        {
+            if (presentation.ParentPresentationId is not null)
+            {
+                ValidateNoNul(
+                    presentation.ParentPresentationId,
+                    nameof(presentation.ParentPresentationId));
+            }
+            if (presentation.Representation is not null)
+            {
+                ValidateNoNul(
+                    presentation.Representation,
+                    nameof(presentation.Representation));
+            }
+        }
+    }
+
+    private static void ValidateDocument(ApplicationProfileDocument document)
+    {
+        if (document.Version != SchemaVersion || document.Profiles is null)
+        {
+            throw new InvalidDataException("Application profile document has an unsupported schema.");
+        }
+
+        var profileIds = new HashSet<string>(ProfileIdComparer);
+        foreach (var profile in document.Profiles)
+        {
+            if (profile is null)
+            {
+                throw new InvalidDataException("Application profile document contains a null profile.");
+            }
+            ValidateProfile(profile);
+            if (!profileIds.Add(profile.Id))
+            {
+                throw new InvalidDataException("Application profile document contains duplicate profile IDs.");
+            }
         }
     }
 
