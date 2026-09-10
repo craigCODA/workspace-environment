@@ -220,6 +220,23 @@ public sealed class ApplicationProfileStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Save_persists_mixed_case_ids_using_ordinal_ignore_case_order()
+    {
+        IApplicationProfileStore store = CreateStore();
+        await store.SaveAsync(Profile("profile:B", "Upper B", [], null), CancellationToken.None);
+        await store.SaveAsync(Profile("profile:a", "Lower a", [], null), CancellationToken.None);
+
+        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(ProfileStorePath));
+        var profileIds = document.RootElement
+            .GetProperty("profiles")
+            .EnumerateArray()
+            .Select(profile => profile.GetProperty("id").GetString()!)
+            .ToArray();
+
+        Assert.Equal(["profile:a", "profile:B"], profileIds);
+    }
+
+    [Fact]
     public async Task Save_cancellation_preserves_the_old_file_without_temporary_files()
     {
         IApplicationProfileStore store = CreateStore();
@@ -234,6 +251,32 @@ public sealed class ApplicationProfileStoreTests : IDisposable
 
         Assert.Equal(original, await CreateStore().FindAsync(original.Id, CancellationToken.None));
         Assert.Empty(Directory.EnumerateFiles(_temporaryDirectory, "application-profiles.json.*.tmp"));
+    }
+
+    [Fact]
+    public async Task Save_cancellation_after_temporary_file_creation_preserves_the_old_file_and_cleans_up()
+    {
+        var original = Profile("profile:pythos-codex", "PythOS Codex", [], null);
+        await CreateStore().SaveAsync(original, CancellationToken.None);
+        var temporaryFileCreated = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource();
+        var store = new AtomicApplicationProfileStore(
+            ProfileStorePath,
+            async (temporaryPath, cancellationToken) =>
+            {
+                temporaryFileCreated.TrySetResult(temporaryPath);
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            });
+
+        var saveTask = store.SaveAsync(original with { DisplayName = "Changed" }, cancellation.Token);
+        var temporaryPath = await temporaryFileCreated.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(File.Exists(temporaryPath));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => saveTask);
+        Assert.Equal(original, await CreateStore().FindAsync(original.Id, CancellationToken.None));
+        Assert.False(File.Exists(temporaryPath));
     }
 
     public void Dispose()

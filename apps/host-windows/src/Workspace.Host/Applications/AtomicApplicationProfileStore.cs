@@ -1,4 +1,7 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
+
+[assembly: InternalsVisibleTo("Workspace.Host.Tests")]
 
 namespace Workspace.Host.Applications;
 
@@ -14,11 +17,20 @@ public sealed class AtomicApplicationProfileStore : IApplicationProfileStore
     };
 
     private readonly string _path;
+    private readonly Func<string, CancellationToken, Task>? _beforeTemporaryFileWriteAsync;
 
     public AtomicApplicationProfileStore(string path)
+        : this(path, null)
+    {
+    }
+
+    internal AtomicApplicationProfileStore(
+        string path,
+        Func<string, CancellationToken, Task>? beforeTemporaryFileWriteAsync)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         _path = Path.GetFullPath(path);
+        _beforeTemporaryFileWriteAsync = beforeTemporaryFileWriteAsync;
     }
 
     public async Task<IReadOnlyList<ApplicationLaunchProfile>> ListAsync(CancellationToken cancellationToken)
@@ -121,6 +133,10 @@ public sealed class AtomicApplicationProfileStore : IApplicationProfileStore
                 4096,
                 FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
+                if (_beforeTemporaryFileWriteAsync is not null)
+                {
+                    await _beforeTemporaryFileWriteAsync(temporaryPath, cancellationToken);
+                }
                 await JsonSerializer.SerializeAsync(stream, document, JsonOptions, cancellationToken);
                 await stream.FlushAsync(cancellationToken);
                 stream.Flush(flushToDisk: true);
