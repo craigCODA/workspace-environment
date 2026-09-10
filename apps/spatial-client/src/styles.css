@@ -130,6 +130,11 @@ button {
   background: rgb(70 115 108 / 54%);
 }
 
+.coda-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
 .coda-presence[data-state="listening"] .coda-beacon,
 .coda-presence[data-state="wake-detected"] .coda-beacon {
   background: #8fc6bc;

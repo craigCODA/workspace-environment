@@ -28,6 +28,7 @@ public sealed class VoiceConversationController : IAsyncDisposable
     private bool _recognizerRunning;
     private bool _conversationActive;
     private bool _awaitingPreferredName;
+    private string? _pendingPreferredName;
     private string? _currentUtteranceId;
     private long _utteranceSequence;
     private bool _disposed;
@@ -64,6 +65,7 @@ public sealed class VoiceConversationController : IAsyncDisposable
             _running = true;
             _conversationActive = false;
             _awaitingPreferredName = false;
+            _pendingPreferredName = null;
         }
         finally
         {
@@ -217,6 +219,27 @@ public sealed class VoiceConversationController : IAsyncDisposable
         }
     }
 
+    public async Task BeginConversationAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            _running = true;
+            if (!_profile.MicrophoneEnabled)
+            {
+                SetState(VoiceState.MicrophoneOff);
+                return;
+            }
+
+            _conversationActive = true;
+            await EnterListeningAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task SetMicrophoneEnabledAsync(
         bool enabled,
         CancellationToken cancellationToken = default)
@@ -263,6 +286,7 @@ public sealed class VoiceConversationController : IAsyncDisposable
         {
             _conversationActive = false;
             _awaitingPreferredName = false;
+            _pendingPreferredName = null;
             _speechCancellation?.Cancel();
             await _synthesizer.CancelAsync().ConfigureAwait(false);
             await EnterDormantAsync(cancellationToken).ConfigureAwait(false);
@@ -297,6 +321,8 @@ public sealed class VoiceConversationController : IAsyncDisposable
     private async Task OnRecognizedAsync(object? sender, SpeechRecognizedEventArgs args)
     {
         string? capturedName = null;
+        string? nameToConfirm = null;
+        bool retryName = false;
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -321,11 +347,38 @@ public sealed class VoiceConversationController : IAsyncDisposable
             CancelSilenceTimeout();
             if (_awaitingPreferredName)
             {
-                capturedName = text.Length > 80 ? text[..80] : text;
+                nameToConfirm = text.Length > 80 ? text[..80] : text;
                 _awaitingPreferredName = false;
-                _conversationActive = false;
-                Raise(new PreferredNameCaptured(capturedName, _timeProvider.GetUtcNow()));
+                _pendingPreferredName = nameToConfirm;
+                _conversationActive = true;
                 await StopRecognizerAsync().ConfigureAwait(false);
+            }
+            else if (_pendingPreferredName is not null)
+            {
+                var answer = text.Trim().TrimEnd('.', '!', '?').ToLowerInvariant();
+                if (answer is "yes" or "yes that's right" or "that's right" or "correct")
+                {
+                    capturedName = _pendingPreferredName;
+                    _pendingPreferredName = null;
+                    _conversationActive = false;
+                    Raise(new PreferredNameCaptured(capturedName, _timeProvider.GetUtcNow()));
+                    await StopRecognizerAsync().ConfigureAwait(false);
+                }
+                else if (answer is "no" or "no that's not right" or "that's not right")
+                {
+                    _pendingPreferredName = null;
+                    _awaitingPreferredName = true;
+                    _conversationActive = true;
+                    retryName = true;
+                    await StopRecognizerAsync().ConfigureAwait(false);
+                }
+                else
+                {
+                    nameToConfirm = text.Length > 80 ? text[..80] : text;
+                    _pendingPreferredName = nameToConfirm;
+                    _conversationActive = true;
+                    await StopRecognizerAsync().ConfigureAwait(false);
+                }
             }
             else
             {
@@ -339,7 +392,15 @@ public sealed class VoiceConversationController : IAsyncDisposable
             _gate.Release();
         }
 
-        if (capturedName is not null)
+        if (nameToConfirm is not null)
+        {
+            await SpeakAsync($"I heard {nameToConfirm}. Is that right?").ConfigureAwait(false);
+        }
+        else if (retryName)
+        {
+            await SpeakAsync("Okay. What should I call you?").ConfigureAwait(false);
+        }
+        else if (capturedName is not null)
         {
             await SpeakAsync($"It's good to meet you, {capturedName}. Say Hey Coda whenever you need me.")
                 .ConfigureAwait(false);
@@ -482,6 +543,7 @@ public sealed class VoiceConversationController : IAsyncDisposable
                 if (_silenceCancellation == source && State == VoiceState.Listening)
                 {
                     _awaitingPreferredName = false;
+                    _pendingPreferredName = null;
                     await EnterDormantAsync(source.Token).ConfigureAwait(false);
                 }
             }

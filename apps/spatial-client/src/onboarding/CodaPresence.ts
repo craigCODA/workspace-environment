@@ -96,7 +96,7 @@ export function reduceCodaPresence(
 
 export type CodaPresenceOptions = Readonly<{
   onPreferenceChange?(change: Record<string, boolean | string>): void;
-  onVoiceControl?(action: 'pause' | 'resume' | 'stop'): void;
+  onVoiceControl?(action: 'listen' | 'pause' | 'resume' | 'stop'): void;
 }>;
 
 export class CodaPresence {
@@ -106,6 +106,7 @@ export class CodaPresence {
   readonly #transcript: HTMLElement;
   readonly #terminal: HTMLElement;
   readonly #terminalList: HTMLUListElement;
+  readonly #talkButton: HTMLButtonElement;
   readonly #microphoneButton: HTMLButtonElement;
   readonly #captionsButton: HTMLButtonElement;
   readonly #transcriptButton: HTMLButtonElement;
@@ -152,6 +153,11 @@ export class CodaPresence {
     const controls = document.createElement('nav');
     controls.className = 'coda-controls';
     controls.setAttribute('aria-label', 'Coda controls');
+    this.#talkButton = this.#controlButton(controls, 'Talk', () => {
+      const active = ['listening', 'wake-detected', 'thinking', 'speaking', 'working']
+        .includes(this.#model.state);
+      this.#options.onVoiceControl?.(active ? 'stop' : 'listen');
+    });
     this.#microphoneButton = this.#controlButton(controls, 'Mic', () => {
       const enabled = !this.#model.microphoneEnabled;
       this.setPreferences({ microphoneEnabled: enabled });
@@ -248,6 +254,11 @@ export class CodaPresence {
     this.#caption.dataset.visible = String(
       this.#model.captionsEnabled && this.#model.caption.length > 0,
     );
+    const conversationActive = ['listening', 'wake-detected', 'thinking', 'speaking', 'working']
+      .includes(this.#model.state);
+    this.#talkButton.textContent = conversationActive ? 'Stop' : 'Talk';
+    this.#talkButton.setAttribute('aria-pressed', String(conversationActive));
+    this.#talkButton.disabled = this.#model.state === 'mic-off';
     this.#microphoneButton.setAttribute('aria-pressed', String(this.#model.microphoneEnabled));
     this.#microphoneButton.textContent = this.#model.microphoneEnabled ? 'Mic on' : 'Mic off';
     this.#captionsButton.setAttribute('aria-pressed', String(this.#model.captionsEnabled));

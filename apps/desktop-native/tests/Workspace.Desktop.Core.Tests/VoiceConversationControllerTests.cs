@@ -32,6 +32,19 @@ public sealed class VoiceConversationControllerTests
     }
 
     [Fact]
+    public async Task Talk_control_begins_a_conversation_without_the_wake_phrase()
+    {
+        var fixture = new VoiceFixture();
+        await fixture.Controller.StartAsync(Profile(onboardingCompleted: true));
+
+        await fixture.Controller.BeginConversationAsync();
+        await fixture.Recognizer.EmitRecognizedAsync("show terminal");
+
+        Assert.Contains(fixture.Events, item => item is VoiceCommandRecognized command
+            && command.Text == "show terminal");
+    }
+
+    [Fact]
     public async Task Active_listening_returns_to_dormant_after_silence()
     {
         var fixture = new VoiceFixture(TimeSpan.FromMilliseconds(15));
@@ -85,8 +98,25 @@ public sealed class VoiceConversationControllerTests
         Assert.Equal("What should I call you?", fixture.Synthesizer.Spoken[6]);
         Assert.Equal(VoiceState.Listening, fixture.Controller.State);
         await fixture.Recognizer.EmitRecognizedAsync("Morgan");
+        Assert.DoesNotContain(fixture.Events, item => item is PreferredNameCaptured);
+        Assert.Equal("I heard Morgan. Is that right?", fixture.Synthesizer.Spoken[7]);
+        await fixture.Recognizer.EmitRecognizedAsync("yes");
         Assert.Contains(fixture.Events, item => item is PreferredNameCaptured captured
             && captured.Name == "Morgan");
+    }
+
+    [Fact]
+    public async Task Rejected_name_is_not_persisted_and_the_question_is_repeated()
+    {
+        var fixture = new VoiceFixture();
+        await fixture.Controller.StartAsync(Profile(onboardingCompleted: false));
+
+        await fixture.Recognizer.EmitRecognizedAsync("background television");
+        await fixture.Recognizer.EmitRecognizedAsync("no");
+
+        Assert.DoesNotContain(fixture.Events, item => item is PreferredNameCaptured);
+        Assert.Equal("Okay. What should I call you?", fixture.Synthesizer.Spoken[^1]);
+        Assert.Equal(VoiceState.Listening, fixture.Controller.State);
     }
 
     [Fact]

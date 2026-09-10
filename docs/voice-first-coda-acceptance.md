@@ -39,7 +39,7 @@ Acoustic speaker output and physical microphone recognition were not independent
 
 ## Spoken controls and boundaries
 
-- Local controls include stop, pause, repeat, show/hide activity, list/forget permissions, reset onboarding, preferred-name changes, microphone/caption/transcript toggles, alert modes, navigation modes, return home, stop camera, and focus by scene name.
+- Local controls include the optional click-to-talk button, stop, pause, repeat, show/hide activity, list/forget permissions, reset onboarding, preferred-name changes, microphone/caption/transcript toggles, alert modes, navigation modes, return home, stop camera, and focus by scene name.
 - User speech overrides in-progress Coda speech. Manual mouse, keyboard, wheel, or Escape input cancels agent camera motion immediately.
 - Agent scene requests are restricted to typed camera and surface commands. The agent receives a bounded structured scene snapshot and never captured pixels.
 - `remember this` stores only the classified capability and exact project scope. Credential access, remote publication, system configuration, and destructive access outside the workspace cannot be persisted.

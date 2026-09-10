@@ -22,7 +22,8 @@ public sealed partial class MainWindow : Window
         _coordinator = new DesktopCoordinator(
             WorkspaceWebView,
             DispatcherQueue,
-            ArgumentValue(arguments, "--source-root"));
+            ArgumentValue(arguments, "--source-root"),
+            ArgumentValue(arguments, "--state-root"));
         WorkspaceWebView.Loaded += OnWorkspaceLoaded;
         AppWindow.Closing += (_, _) => _ = _coordinator.DisposeAsync();
     }

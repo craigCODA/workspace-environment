@@ -43,6 +43,7 @@ internal static class LauncherProgram
                 versionDirectory,
                 pipeName,
                 token,
+                options.StateRoot,
                 options.SourceRoot);
 
             var healthy = await WaitForHealthAsync(
@@ -75,6 +76,7 @@ internal static class LauncherProgram
         string workingDirectory,
         string pipeName,
         string token,
+        string stateRoot,
         string? sourceRoot)
     {
         var startInfo = new ProcessStartInfo(executable)
@@ -86,6 +88,8 @@ internal static class LauncherProgram
         startInfo.ArgumentList.Add(pipeName);
         startInfo.ArgumentList.Add("--health-token");
         startInfo.ArgumentList.Add(token);
+        startInfo.ArgumentList.Add("--state-root");
+        startInfo.ArgumentList.Add(stateRoot);
         if (!string.IsNullOrWhiteSpace(sourceRoot))
         {
             startInfo.ArgumentList.Add("--source-root");

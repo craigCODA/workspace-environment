@@ -41,13 +41,21 @@ public sealed class DesktopCoordinator : IAsyncDisposable
     private bool _started;
     private bool _disposed;
     private readonly string? _configuredSourceRoot;
+    private readonly string? _configuredStateRoot;
 
-    public DesktopCoordinator(WebView2 webView, DispatcherQueue dispatcher, string? sourceRoot = null)
+    public DesktopCoordinator(
+        WebView2 webView,
+        DispatcherQueue dispatcher,
+        string? sourceRoot = null,
+        string? stateRoot = null)
     {
         _dispatcher = dispatcher;
         _configuredSourceRoot = string.IsNullOrWhiteSpace(sourceRoot)
             ? null
             : Path.GetFullPath(sourceRoot);
+        _configuredStateRoot = string.IsNullOrWhiteSpace(stateRoot)
+            ? null
+            : Path.GetFullPath(stateRoot);
         _bridge = new WebViewBridge(webView);
         _bridge.MessageReceived += OnRendererMessage;
     }
@@ -61,10 +69,10 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         }
 
         _sourceRoot = _configuredSourceRoot ?? ResolveSourceRoot();
-        var stateDirectory = Path.Combine(
+        var workspaceStateRoot = _configuredStateRoot ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "WorkspaceEnvironment",
-            "Coda");
+            "WorkspaceEnvironment");
+        var stateDirectory = Path.Combine(workspaceStateRoot, "Coda");
         _profileStore = new VoiceProfileStore(Path.Combine(stateDirectory, "voice-profile.json"));
         _profile = await _profileStore.LoadAsync(cancellationToken);
         _capabilities = await CapabilityBroker.OpenAsync(
@@ -807,6 +815,9 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         }
         switch (ReadString(payload, "action"))
         {
+            case "listen":
+                await voice.BeginConversationAsync(_lifetime.Token);
+                break;
             case "pause":
                 await voice.PauseAsync(_lifetime.Token);
                 break;

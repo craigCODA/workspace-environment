@@ -36,7 +36,7 @@ npm run native:install
 
 This creates **Workspace Environment Native Preview** shortcuts without changing or deleting the existing Electron installation. Versioned builds live under `%LOCALAPPDATA%\WorkspaceEnvironment\versions`; the stable launcher promotes a pending build only after its health handshake and rolls back to the last known-good version if validation or startup fails.
 
-On first launch, Coda speaks the welcome while synchronized captions appear at the bottom, then asks what to call you. Later launches say `Welcome back, <name>.` After that, ambient speech is ignored until `Hey Coda` is detected. Microphone, captions, transcript display, activity, proactive alerts, and navigation policy remain directly controllable in the workspace.
+On first launch, Coda speaks the welcome while synchronized captions appear at the bottom, then asks what to call you and confirms what it heard before saving. Later launches say `Welcome back, <name>.` After that, ambient speech is ignored until `Hey Coda` is detected. The **Talk** control can start the same conversation without a wake phrase. Microphone, captions, transcript display, activity, proactive alerts, and navigation policy remain directly controllable in the workspace.
 
 Coda can inspect structured scene state, guide the camera, focus named surfaces, move or resize surfaces, run builds, and request a restart. Approval prompts accept `allow once`, `remember this`, or `deny`. Remembered permissions are exact and project-scoped; credentials, remote publication, system configuration, and destructive work outside the workspace always require fresh confirmation.
 
