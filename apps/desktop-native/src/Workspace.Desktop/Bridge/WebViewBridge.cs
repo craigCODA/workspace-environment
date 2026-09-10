@@ -93,6 +93,12 @@ public sealed class WebViewBridge
         Post("scene.command", new { id = requestId, command, args = arguments });
     }
 
+    public void PostWorkspaceCommand(string requestId, string command, object? arguments)
+    {
+        _validator.ExpectWorkspaceResult(requestId);
+        Post("workspace.command", new { id = requestId, command, args = arguments });
+    }
+
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs args)
     {
         if (!_validator.TryParse(args.WebMessageAsJson, out var message, out _)

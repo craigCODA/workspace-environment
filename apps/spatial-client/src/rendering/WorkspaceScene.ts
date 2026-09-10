@@ -181,6 +181,7 @@ export class WorkspaceScene {
         kind: entity.kind,
         name: entity.name,
         presentation: this.presentationFor(entity.id) ?? entity.presentation,
+        relationships: entity.relationships.map((relationship) => ({ ...relationship })),
         selected: entity.id === selectedEntityId,
       })),
     };

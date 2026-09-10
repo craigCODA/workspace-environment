@@ -23,7 +23,14 @@ class FakeScene implements SceneControlTarget {
   snapshot(): SceneSnapshot {
     return {
       camera: this.getCameraPose(),
-      entities: [{ id: 'surface:one', kind: 'pc.window', name: 'One', presentation: this.presentation, selected: false }],
+      entities: [{
+        id: 'surface:one',
+        kind: 'pc.window',
+        name: 'One',
+        presentation: this.presentation,
+        relationships: [],
+        selected: false,
+      }],
     };
   }
   presentationFor(entityId: string): PresentationState | null {

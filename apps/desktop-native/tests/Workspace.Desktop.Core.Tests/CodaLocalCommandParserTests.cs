@@ -31,4 +31,25 @@ public sealed class CodaLocalCommandParserTests
         Assert.Equal(CodaLocalCommandKind.AgentRequest,
             CodaLocalCommandParser.Parse("build a floating project browser").Kind);
     }
+
+    [Theory]
+    [InlineData("open Notepad here")]
+    [InlineData("restart this app")]
+    [InlineData("save this as PythOS Codex")]
+    public void Application_requests_are_left_for_the_typed_agent_path(string text)
+    {
+        var command = CodaLocalCommandParser.Parse(text);
+
+        Assert.Equal(CodaLocalCommandKind.AgentRequest, command.Kind);
+        Assert.Equal(text, command.Argument);
+    }
+
+    [Theory]
+    [InlineData("allow once")]
+    [InlineData("remember this")]
+    [InlineData("deny")]
+    public void Approval_words_are_not_global_local_commands(string text)
+    {
+        Assert.Equal(CodaLocalCommandKind.AgentRequest, CodaLocalCommandParser.Parse(text).Kind);
+    }
 }

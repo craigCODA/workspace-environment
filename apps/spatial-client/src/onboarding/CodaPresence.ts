@@ -105,6 +105,21 @@ export type CodaPresenceOptions = Readonly<{
   onAgentInstruction?(text: string): void;
 }>;
 
+export type CodaInstructionEnvelope = Readonly<{
+  type: 'agent.instruction';
+  payload: Readonly<{ text: string }>;
+}>;
+
+export function submitCodaInstruction(
+  text: string,
+  post: (message: CodaInstructionEnvelope) => void,
+): boolean {
+  const instruction = text.trim();
+  if (!instruction) return false;
+  post({ type: 'agent.instruction', payload: { text: instruction } });
+  return true;
+}
+
 export class CodaPresence {
   readonly #element: HTMLElement;
   readonly #stateLabel: HTMLSpanElement;
@@ -182,11 +197,12 @@ export class CodaPresence {
     chatForm.append(this.#chatInput, send);
     chatForm.addEventListener('submit', (event) => {
       event.preventDefault();
-      const text = this.#chatInput.value.trim();
-      if (!text) return;
-      this.addChatMessage('user', text);
-      this.#chatInput.value = '';
-      this.#options.onAgentInstruction?.(text);
+      submitCodaInstruction(this.#chatInput.value, (message) => {
+        const { text } = message.payload;
+        this.addChatMessage('user', text);
+        this.#chatInput.value = '';
+        this.#options.onAgentInstruction?.(text);
+      });
     });
     this.#chat.append(chatHeading, this.#chatMessages, chatForm);
 

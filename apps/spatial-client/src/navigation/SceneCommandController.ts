@@ -1,4 +1,4 @@
-import type { PresentationState } from '@workspace/world-schema';
+import type { PresentationState, Relationship } from '@workspace/world-schema';
 import {
   CameraNavigator,
   type CameraPose,
@@ -14,6 +14,7 @@ export type SceneSnapshot = Readonly<{
     kind: string;
     name: string;
     presentation: PresentationState;
+    relationships: readonly Relationship[];
     selected: boolean;
   }>[];
 }>;

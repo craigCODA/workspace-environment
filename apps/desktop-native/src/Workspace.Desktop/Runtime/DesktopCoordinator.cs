@@ -16,7 +16,10 @@ using Workspace.Desktop.Windows.Voice;
 
 namespace Workspace.Desktop.Runtime;
 
-public sealed class DesktopCoordinator : IAsyncDisposable
+public sealed class DesktopCoordinator :
+    IAsyncDisposable,
+    IWorkspaceCommandGateway,
+    IWorkspaceActionOutput
 {
     private readonly DispatcherQueue _dispatcher;
     private readonly WorkspaceHostProcess _host = new();
@@ -25,18 +28,23 @@ public sealed class DesktopCoordinator : IAsyncDisposable
     private readonly StringBuilder _assistantResponse = new();
     private readonly List<string> _terminalEvents = [];
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _sceneResults = new();
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _workspaceResults = new();
     private VoiceProfileStore? _profileStore;
     private VoiceProfile _profile = VoiceProfile.Default;
     private CapabilityBroker? _capabilities;
     private VoiceConversationController? _voice;
     private CodexAppServerClient? _agent;
+    private WorkspaceActionOrchestrator? _workspaceActions;
     private PendingApproval? _pendingApproval;
     private IReadOnlyList<SceneDirective>? _pendingNavigation;
     private Task? _agentEvents;
     private Task? _voiceStartup;
     private string? _sourceRoot;
     private string? _lastSpokenText;
+    private string? _pendingWorkspaceFocusSurfaceId;
+    private string? _pendingWorkspaceFocusWindowId;
     private long _sceneRequestSequence;
+    private long _workspaceRequestSequence;
     private bool _agentTurnActive;
     private bool _started;
     private bool _disposed;
@@ -78,6 +86,11 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         _capabilities = await CapabilityBroker.OpenAsync(
             Path.Combine(stateDirectory, "capability-grants.json"),
             cancellationToken: cancellationToken);
+        _workspaceActions = new WorkspaceActionOrchestrator(
+            this,
+            this,
+            _capabilities,
+            $"workspace:{_sourceRoot}");
 
         await _host.StartAsync(cancellationToken);
         await _bridge.InitializeAsync(ResolveSpatialClientDirectory(), cancellationToken);
@@ -201,7 +214,7 @@ public sealed class DesktopCoordinator : IAsyncDisposable
                 _ = SavePreferredNameAsync(captured.Name);
                 break;
             case VoiceCommandRecognized command:
-                _ = HandleVoiceCommandAsync(command.Text);
+                _ = HandleAgentInstructionAsync(command.Text);
                 break;
             case VoiceFailure failure:
                 PostOnUi("voice.state", new { state = "needs-attention" });
@@ -210,7 +223,7 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         }
     }
 
-    private async Task HandleVoiceCommandAsync(string text)
+    private async Task HandleAgentInstructionAsync(string text)
     {
         var local = CodaLocalCommandParser.Parse(text);
         if (local.Kind == CodaLocalCommandKind.Stop)
@@ -222,6 +235,12 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         if (_pendingApproval is not null)
         {
             await HandleApprovalAnswerAsync(text);
+            return;
+        }
+
+        if (_workspaceActions?.PendingApproval is not null)
+        {
+            await HandleWorkspaceApprovalAnswerAsync(text);
             return;
         }
 
@@ -250,15 +269,7 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         {
             var snapshot = await InspectSceneAsync(_lifetime.Token);
             await agent.StartTurnAsync(
-                "You are Coda, the voice-first guide inside Workspace Environment. "
-                + "Act on the user's request in the current workspace when allowed. "
-                + "Use only brokered capabilities and never request or infer scene pixels. "
-                + "Keep the final response concise and natural to speak aloud. "
-                + "You may control the Three.js space with private directives shaped exactly like "
-                + "[[scene:{\"command\":\"camera.focus\",\"args\":{\"entityId\":\"exact id from snapshot\"}}]]. "
-                + "Allowed commands: camera.navigate, camera.focus, camera.stop, camera.return-home, "
-                + "surface.move, surface.resize. Directive markup is removed before speech. "
-                + $"Current structured scene snapshot: {snapshot}. User request: {text}",
+                BuildAgentPrompt(snapshot, text),
                 _lifetime.Token);
             _agentTurnActive = true;
         }
@@ -316,6 +327,41 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         await SpeakAsync(decision == AgentApprovalDecision.Decline
             ? "Denied."
             : "Allowed once.");
+    }
+
+    private async Task HandleWorkspaceApprovalAnswerAsync(string text)
+    {
+        var actions = _workspaceActions;
+        var pending = actions?.PendingApproval;
+        if (actions is null || pending is null)
+        {
+            return;
+        }
+
+        var answer = text.Trim().ToLowerInvariant();
+        WorkspaceApprovalDecision? decision =
+            answer.Contains("remember this", StringComparison.Ordinal)
+                ? WorkspaceApprovalDecision.Remember
+                : answer.Contains("allow once", StringComparison.Ordinal)
+                    ? WorkspaceApprovalDecision.AllowOnce
+                    : answer.Contains("deny", StringComparison.Ordinal)
+                        ? WorkspaceApprovalDecision.Deny
+                        : null;
+        if (decision is null)
+        {
+            await SpeakAsync(pending.Policy.Confirmation == WorkspaceConfirmation.Rememberable
+                ? "Please say allow once, remember this, or deny."
+                : "Please say allow once or deny.");
+            return;
+        }
+
+        var approved = pending.Directive;
+        await actions.RespondToApprovalAsync(decision.Value, _lifetime.Token);
+        if (actions.PendingApproval is null)
+        {
+            CaptureWorkspaceCameraFocus(approved);
+            await ApplyPendingWorkspaceCameraFocusAsync(_lifetime.Token);
+        }
     }
 
     private async Task PumpAgentEventsAsync(
@@ -423,6 +469,12 @@ public sealed class DesktopCoordinator : IAsyncDisposable
                     await _agent.RespondToApprovalAsync(
                         pending.Request.RequestId,
                         AgentApprovalDecision.Cancel,
+                        _lifetime.Token);
+                }
+                if (_workspaceActions?.PendingApproval is not null)
+                {
+                    await _workspaceActions.RespondToApprovalAsync(
+                        WorkspaceApprovalDecision.Deny,
                         _lifetime.Token);
                 }
                 _pendingNavigation = null;
@@ -557,25 +609,46 @@ public sealed class DesktopCoordinator : IAsyncDisposable
 
     private async Task HandleAgentResponseAsync(string response)
     {
-        var parsed = SceneDirectiveParser.Parse(response);
-        if (parsed.SpokenText.Length > 0)
+        var workspace = WorkspaceDirectiveParser.Parse(response);
+        var scene = SceneDirectiveParser.Parse(workspace.SpokenText);
+        if (scene.SpokenText.Length > 0 && workspace.Directives.Count == 0)
         {
-            await SpeakResponseAsync(parsed.SpokenText);
+            await SpeakResponseAsync(scene.SpokenText);
         }
-        if (parsed.Directives.Count == 0)
+
+        var actions = _workspaceActions;
+        if (actions is not null)
+        {
+            foreach (var directive in workspace.Directives)
+            {
+                await actions.BeginAsync(directive, _lifetime.Token);
+                if (actions.PendingApproval is not null)
+                {
+                    break;
+                }
+                CaptureWorkspaceCameraFocus(directive);
+                await ApplyPendingWorkspaceCameraFocusAsync(_lifetime.Token);
+            }
+        }
+
+        if (scene.Directives.Count == 0 || actions?.PendingApproval is not null)
         {
             return;
         }
+        await HandleSceneDirectivesAsync(scene.Directives);
+    }
 
+    private async Task HandleSceneDirectivesAsync(IReadOnlyList<SceneDirective> directives)
+    {
         switch (_profile.NavigationMode)
         {
             case AgentNavigationMode.GuideFreely:
-                await ExecuteSceneDirectivesAsync(parsed.Directives);
+                await ExecuteSceneDirectivesAsync(directives);
                 break;
             case AgentNavigationMode.AskFirst:
-                _pendingNavigation = parsed.Directives;
+                _pendingNavigation = directives;
                 await SpeakAsync(
-                    $"I am ready to {DescribeSceneDirective(parsed.Directives[0])}. Say allow once or deny.");
+                    $"I am ready to {DescribeSceneDirective(directives[0])}. Say allow once or deny.");
                 break;
             case AgentNavigationMode.VoiceCommandsOnly:
                 await SpeakAsync("I left the view where it is because navigation is set to voice commands only.");
@@ -807,17 +880,20 @@ public sealed class DesktopCoordinator : IAsyncDisposable
                 if (ReadString(message.Payload, "text") is { Length: > 0 } instruction)
                 {
                     _ = _voice?.SubmitTextAsync(instruction, _lifetime.Token)
-                        ?? HandleVoiceCommandAsync(instruction);
+                        ?? HandleAgentInstructionAsync(instruction);
                 }
                 break;
             case "agent.approval.response":
                 if (ReadString(message.Payload, "answer") is { Length: > 0 } answer)
                 {
-                    _ = HandleApprovalAnswerAsync(answer);
+                    _ = DispatchApprovalAnswerAsync(answer);
                 }
                 break;
             case "scene.command.result":
                 CompleteSceneCommand(message.Payload);
+                break;
+            case "workspace.command.result":
+                CompleteWorkspaceCommand(message.Payload);
                 break;
         }
     }
@@ -919,6 +995,218 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         });
     }
 
+    private Task DispatchApprovalAnswerAsync(string answer)
+    {
+        if (_pendingApproval is not null)
+        {
+            return HandleApprovalAnswerAsync(answer);
+        }
+        if (_workspaceActions?.PendingApproval is not null)
+        {
+            return HandleWorkspaceApprovalAnswerAsync(answer);
+        }
+        if (_pendingNavigation is not null)
+        {
+            return HandleNavigationAnswerAsync(answer);
+        }
+        return Task.CompletedTask;
+    }
+
+    Task<JsonElement> IWorkspaceCommandGateway.SendAsync(
+        string command,
+        object? arguments,
+        CancellationToken cancellationToken) =>
+        SendWorkspaceCommandAsync(command, arguments, cancellationToken);
+
+    Task IWorkspaceActionOutput.RequestApprovalAsync(
+        WorkspacePendingApproval approval,
+        CancellationToken cancellationToken)
+    {
+        PostOnUi("voice.state", new { state = "needs-attention" });
+        var prompt = approval.Policy.Confirmation == WorkspaceConfirmation.Rememberable
+            ? " Say allow once, remember this, or deny."
+            : " Say allow once or deny.";
+        return SpeakAsync(approval.Description + prompt);
+    }
+
+    Task IWorkspaceActionOutput.ReportActivityAsync(string message, CancellationToken cancellationToken)
+    {
+        AddTerminalEvent(message);
+        return Task.CompletedTask;
+    }
+
+    Task IWorkspaceActionOutput.SpeakAsync(string message, CancellationToken cancellationToken) =>
+        SpeakAsync(message);
+
+    private async Task<JsonElement> SendWorkspaceCommandAsync(
+        string command,
+        object? arguments,
+        CancellationToken cancellationToken)
+    {
+        var id = $"native-workspace-{Interlocked.Increment(ref _workspaceRequestSequence)}";
+        var completion = new TaskCompletionSource<JsonElement>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_workspaceResults.TryAdd(id, completion))
+        {
+            throw new InvalidOperationException("A duplicate workspace request was generated.");
+        }
+        if (!_dispatcher.TryEnqueue(() =>
+            {
+                try
+                {
+                    _bridge.PostWorkspaceCommand(id, command, arguments);
+                }
+                catch (Exception exception)
+                {
+                    _workspaceResults.TryRemove(id, out _);
+                    completion.TrySetException(exception);
+                }
+            }))
+        {
+            _workspaceResults.TryRemove(id, out _);
+            throw new InvalidOperationException("The workspace view is not available.");
+        }
+
+        try
+        {
+            return await completion.Task.WaitAsync(TimeSpan.FromSeconds(20), cancellationToken);
+        }
+        finally
+        {
+            _workspaceResults.TryRemove(id, out _);
+        }
+    }
+
+    private void CompleteWorkspaceCommand(JsonElement payload)
+    {
+        var id = ReadString(payload, "id");
+        if (id is not null && _workspaceResults.TryRemove(id, out var completion))
+        {
+            completion.TrySetResult(payload.Clone());
+        }
+    }
+
+    private void CaptureWorkspaceCameraFocus(WorkspaceDirective directive)
+    {
+        if (directive.Command == "window.focus"
+            && ReadString(directive.Arguments, "windowEntityId") is { Length: > 0 } windowId)
+        {
+            _pendingWorkspaceFocusWindowId = windowId;
+            _pendingWorkspaceFocusSurfaceId = null;
+            return;
+        }
+
+        if (directive.Command == "application.open"
+            && ReadString(directive.Arguments, "targetSurfaceId") is { Length: > 0 } surfaceId)
+        {
+            _pendingWorkspaceFocusSurfaceId = surfaceId;
+            _pendingWorkspaceFocusWindowId = null;
+        }
+    }
+
+    private async Task ApplyPendingWorkspaceCameraFocusAsync(CancellationToken cancellationToken)
+    {
+        var surfaceId = _pendingWorkspaceFocusSurfaceId;
+        var windowId = _pendingWorkspaceFocusWindowId;
+        _pendingWorkspaceFocusSurfaceId = null;
+        _pendingWorkspaceFocusWindowId = null;
+        if (_workspaceActions?.PendingApproval is not null)
+        {
+            return;
+        }
+
+        var entityId = surfaceId;
+        if (string.IsNullOrWhiteSpace(entityId) && !string.IsNullOrWhiteSpace(windowId))
+        {
+            entityId = await ResolveSurfaceDisplayingWindowAsync(windowId, cancellationToken) ?? windowId;
+        }
+        if (string.IsNullOrWhiteSpace(entityId))
+        {
+            return;
+        }
+
+        var arguments = JsonSerializer.SerializeToElement(new
+        {
+            entityId,
+            options = new { mode = "glide", durationMs = 900 },
+        });
+        switch (_profile.NavigationMode)
+        {
+            case AgentNavigationMode.GuideFreely:
+                await SendSceneCommandAsync("camera.focus", JsonSerializer.Deserialize<object>(arguments.GetRawText()), cancellationToken);
+                break;
+            case AgentNavigationMode.AskFirst:
+                _pendingNavigation = [new SceneDirective("camera.focus", arguments)];
+                await SpeakAsync("I am ready to move your view to the requested surface. Say allow once or deny.");
+                break;
+            case AgentNavigationMode.VoiceCommandsOnly:
+                break;
+        }
+    }
+
+    private async Task<string?> ResolveSurfaceDisplayingWindowAsync(
+        string windowEntityId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(await InspectSceneAsync(cancellationToken));
+            if (!document.RootElement.TryGetProperty("entities", out var entities)
+                || entities.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            foreach (var entity in entities.EnumerateArray())
+            {
+                if (ReadString(entity, "kind") != "spatial.surface"
+                    || !entity.TryGetProperty("relationships", out var relationships)
+                    || relationships.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var relationship in relationships.EnumerateArray())
+                {
+                    if (ReadString(relationship, "type") == "displays"
+                        && ReadString(relationship, "targetId") == windowEntityId)
+                    {
+                        return ReadString(entity, "id");
+                    }
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            AddTerminalEvent($"Scene inspection: {exception.Message}");
+        }
+
+        return null;
+    }
+
+    private static string BuildAgentPrompt(string snapshot, string text) =>
+        "You are Coda, the voice-first guide inside Workspace Environment. "
+        + "Act on the user's request in the current workspace when allowed. "
+        + "Use only brokered capabilities and never request or infer scene pixels. "
+        + "Keep the final response concise and natural to speak aloud. "
+        + "Never claim an application action completed; Workspace Host supplies the completion statement after observing the result. "
+        + "You may control Windows applications with private directives shaped exactly like "
+        + "[[workspace:{\"command\":\"application.open\",\"args\":{\"query\":\"Notepad\"}}]]. "
+        + "Allowed workspace commands: application.search, application.profile.list, application.profile.save, "
+        + "application.profile.delete, application.open, application.close, application.restart, window.focus, surface.bindWindow. "
+        + "Use exact IDs from the snapshot. When the user says this application or this screen, use the selected spatial.surface "
+        + "and its displays relationship target as the exact pc.window. "
+        + "application.open args: exactly one of query, applicationId, or profileId; optional launchPolicy, targetSurfaceId, presentation, replaceOccupied. "
+        + "application.close args: windowEntityId. application.restart args: exactly one of windowEntityId or profileId. "
+        + "window.focus args: windowEntityId. surface.bindWindow args: surfaceEntityId, windowEntityId, optional replaceOccupied. "
+        + "Profile save args: id, displayName, applicationId, arguments, launchPolicy; optional workingDirectory, preferredSurfaceId, preferredPresentation. "
+        + "Arguments must be structured tokens, never shell commands or executable paths. "
+        + "You may control the Three.js space with private directives shaped exactly like "
+        + "[[scene:{\"command\":\"camera.focus\",\"args\":{\"entityId\":\"exact id from snapshot\"}}]]. "
+        + "Allowed scene commands: camera.navigate, camera.focus, camera.stop, camera.return-home, "
+        + "surface.move, surface.resize. Directive markup is removed before speech. "
+        + $"Current structured scene snapshot: {snapshot}. User request: {text}";
+
     private static string RendererVoiceState(VoiceState state) => state switch
     {
         VoiceState.Dormant => "waiting",
@@ -984,6 +1272,10 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         _disposed = true;
         _lifetime.Cancel();
         foreach (var completion in _sceneResults.Values)
+        {
+            completion.TrySetCanceled();
+        }
+        foreach (var completion in _workspaceResults.Values)
         {
             completion.TrySetCanceled();
         }

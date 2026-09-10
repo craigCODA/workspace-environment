@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { reduceCodaPresence, type CodaPresenceModel } from './CodaPresence.ts';
+import {
+  reduceCodaPresence,
+  submitCodaInstruction,
+  type CodaPresenceModel,
+} from './CodaPresence.ts';
 
 const initial: CodaPresenceModel = {
   state: 'waiting',
@@ -61,4 +65,14 @@ test('chat can be collapsed without changing voice preferences', () => {
 
   assert.equal(next.chatVisible, false);
   assert.equal(next.microphoneEnabled, true);
+});
+
+test('typed chat posts the shared agent instruction envelope', () => {
+  const posted: unknown[] = [];
+
+  submitCodaInstruction('open Notepad here', (message) => posted.push(message));
+
+  assert.deepEqual(posted, [
+    { type: 'agent.instruction', payload: { text: 'open Notepad here' } },
+  ]);
 });
