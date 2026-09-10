@@ -4,25 +4,38 @@ namespace Workspace.Host.Applications;
 
 public interface IProcessLauncher
 {
-    Task<int> LaunchAsync(string executablePath, string? arguments, CancellationToken cancellationToken);
+    Task<int?> LaunchAsync(ApplicationStartRequest request, CancellationToken cancellationToken);
 }
+
+public sealed record ApplicationStartRequest(
+    ApplicationLaunchKind LaunchKind,
+    string Locator,
+    IReadOnlyList<string> Arguments,
+    string? WorkingDirectory);
 
 public sealed class SystemProcessLauncher : IProcessLauncher
 {
-    public Task<int> LaunchAsync(string executablePath, string? arguments, CancellationToken cancellationToken)
+    public Task<int?> LaunchAsync(ApplicationStartRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.Locator);
 
         var startInfo = new ProcessStartInfo
         {
-            FileName = executablePath,
-            Arguments = arguments ?? string.Empty,
-            UseShellExecute = true,
+            FileName = request.Locator,
+            UseShellExecute = request.LaunchKind is not ApplicationLaunchKind.Executable,
         };
+        if (!string.IsNullOrWhiteSpace(request.WorkingDirectory))
+        {
+            startInfo.WorkingDirectory = request.WorkingDirectory;
+        }
+        foreach (var argument in request.Arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
 
-        var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException($"Windows did not return a process for '{executablePath}'.");
-        return Task.FromResult(process.Id);
+        var process = Process.Start(startInfo);
+        return Task.FromResult<int?>(process?.Id);
     }
 }

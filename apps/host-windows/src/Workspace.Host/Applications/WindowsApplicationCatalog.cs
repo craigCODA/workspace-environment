@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Collections;
 using System.Security;
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32;
 
@@ -9,12 +11,38 @@ namespace Workspace.Host.Applications;
 public sealed class WindowsApplicationCatalog : IApplicationCatalog
 {
     private const string AppPathsKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths";
+    private readonly IReadOnlyList<IApplicationInventorySource> _sources;
 
-    public Task<IReadOnlyList<ApplicationDescriptor>> ListAsync(CancellationToken cancellationToken)
+    public WindowsApplicationCatalog(IEnumerable<IApplicationInventorySource>? sources = null)
     {
-        return Task.Run<IReadOnlyList<ApplicationDescriptor>>(
-            () => Discover(cancellationToken),
-            cancellationToken);
+        _sources = sources?.ToArray() ??
+        [
+            new AppPathsInventorySource(),
+            new StartMenuInventorySource(),
+            new AppsFolderInventorySource(),
+        ];
+    }
+
+    public async Task<IReadOnlyList<ApplicationDescriptor>> ListAsync(CancellationToken cancellationToken)
+    {
+        var applications = new List<ApplicationDescriptor>();
+        foreach (var source in _sources)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                applications.AddRange(await source.ListAsync(cancellationToken));
+            }
+            catch (Exception exception) when (exception is SecurityException or UnauthorizedAccessException or IOException or COMException)
+            {
+                // An inaccessible source must not hide items discovered by other sources.
+            }
+        }
+
+        return ApplicationInventory.Merge(applications)
+            .OrderBy(application => application.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(application => application.Locator, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     public async Task<ApplicationDescriptor?> FindByNameAsync(
@@ -29,23 +57,25 @@ public sealed class WindowsApplicationCatalog : IApplicationCatalog
             string.Equals(app.DisplayName, normalized, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static IReadOnlyList<ApplicationDescriptor> Discover(CancellationToken cancellationToken)
+    private sealed class AppPathsInventorySource : IApplicationInventorySource
     {
-        var byExecutable = new Dictionary<string, ApplicationDescriptor>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
+        public Task<IReadOnlyList<ApplicationDescriptor>> ListAsync(CancellationToken cancellationToken)
         {
-            foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+            return Task.Run<IReadOnlyList<ApplicationDescriptor>>(() =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                ReadAppPaths(hive, view, byExecutable, cancellationToken);
-            }
-        }
+                var applications = new Dictionary<string, ApplicationDescriptor>(StringComparer.OrdinalIgnoreCase);
+                foreach (var hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
+                {
+                    foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        ReadAppPaths(hive, view, applications, cancellationToken);
+                    }
+                }
 
-        return byExecutable.Values
-            .OrderBy(application => application.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(application => application.ExecutablePath, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+                return applications.Values.ToArray();
+            }, cancellationToken);
+        }
     }
 
     private static void ReadAppPaths(
@@ -85,6 +115,114 @@ public sealed class WindowsApplicationCatalog : IApplicationCatalog
         catch (Exception exception) when (exception is SecurityException or UnauthorizedAccessException or IOException)
         {
             // An inaccessible registry view is not fatal to the inventory. Other views are still usable.
+        }
+    }
+
+    private sealed class StartMenuInventorySource : IApplicationInventorySource
+    {
+        public Task<IReadOnlyList<ApplicationDescriptor>> ListAsync(CancellationToken cancellationToken)
+        {
+            var applications = new List<ApplicationDescriptor>();
+            foreach (var directory in new[]
+            {
+                Environment.GetFolderPath(Environment.SpecialFolder.StartMenu),
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu),
+            }.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    foreach (var shortcutPath in Directory.EnumerateFiles(directory, "*.lnk", SearchOption.AllDirectories))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var locator = Path.GetFullPath(shortcutPath);
+                        applications.Add(new ApplicationDescriptor(
+                            CreateStableId(locator),
+                            Path.GetFileNameWithoutExtension(locator),
+                            ApplicationLaunchKind.Shortcut,
+                            locator,
+                            Array.Empty<string>()));
+                    }
+                }
+                catch (Exception exception) when (exception is SecurityException or UnauthorizedAccessException or IOException)
+                {
+                    // An inaccessible Start Menu directory contributes no items.
+                }
+            }
+
+            return Task.FromResult<IReadOnlyList<ApplicationDescriptor>>(applications);
+        }
+    }
+
+    private sealed class AppsFolderInventorySource : IApplicationInventorySource
+    {
+        public Task<IReadOnlyList<ApplicationDescriptor>> ListAsync(CancellationToken cancellationToken)
+        {
+            var applications = new List<ApplicationDescriptor>();
+            object? shell = null;
+            object? folder = null;
+            object? items = null;
+
+            try
+            {
+                var shellType = Type.GetTypeFromProgID("Shell.Application");
+                if (shellType is null)
+                {
+                    return Task.FromResult<IReadOnlyList<ApplicationDescriptor>>(applications);
+                }
+
+                shell = Activator.CreateInstance(shellType);
+                if (shell is null)
+                {
+                    return Task.FromResult<IReadOnlyList<ApplicationDescriptor>>(applications);
+                }
+
+                dynamic shellApplication = shell;
+                folder = shellApplication.NameSpace("shell:AppsFolder");
+                if (folder is null)
+                {
+                    return Task.FromResult<IReadOnlyList<ApplicationDescriptor>>(applications);
+                }
+
+                dynamic appsFolder = folder;
+                items = appsFolder.Items();
+                foreach (dynamic item in (IEnumerable)items)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var locator = item.Path as string;
+                    var displayName = item.Name as string;
+                    if (string.IsNullOrWhiteSpace(locator) || string.IsNullOrWhiteSpace(displayName))
+                    {
+                        continue;
+                    }
+
+                    applications.Add(new ApplicationDescriptor(
+                        CreateStableId(locator),
+                        displayName.Trim(),
+                        ApplicationLaunchKind.Packaged,
+                        locator,
+                        Array.Empty<string>()));
+                }
+            }
+            catch (Exception exception) when (exception is COMException or UnauthorizedAccessException or SecurityException)
+            {
+                // AppsFolder is optional and inaccessible shells contribute no items.
+            }
+            finally
+            {
+                ReleaseComObject(items);
+                ReleaseComObject(folder);
+                ReleaseComObject(shell);
+            }
+
+            return Task.FromResult<IReadOnlyList<ApplicationDescriptor>>(applications);
+        }
+
+        private static void ReleaseComObject(object? value)
+        {
+            if (value is not null && Marshal.IsComObject(value))
+            {
+                Marshal.FinalReleaseComObject(value);
+            }
         }
     }
 

@@ -260,7 +260,7 @@ public sealed class CommandDispatcher(
 
     private async Task<WindowSnapshot?> WaitForWindowAsync(
         string applicationId,
-        int launchedProcessId,
+        int? launchedProcessId,
         CancellationToken cancellationToken)
     {
         const int maximumAttempts = 50;
@@ -272,7 +272,7 @@ public sealed class CommandDispatcher(
                 && !candidate.IsMinimized
                 && candidate.Bounds.Width > 0
                 && candidate.Bounds.Height > 0
-                && (candidate.ProcessId == launchedProcessId
+                && ((launchedProcessId is not null && candidate.ProcessId == launchedProcessId)
                     || string.Equals(
                         candidate.ApplicationId,
                         applicationId,

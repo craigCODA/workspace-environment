@@ -99,6 +99,21 @@ public sealed class ApplicationLifecycleTests
     }
 
     [Fact]
+    public async Task Launcher_keeps_arguments_and_working_directory_structured()
+    {
+        var process = new RecordingProcessLauncher(8100);
+
+        await new ApplicationLauncher(process).LaunchAsync(
+            new ApplicationDescriptor("app:terminal", "Terminal", ApplicationLaunchKind.Executable, @"C:\wt.exe", []),
+            ["new-tab", "codex"],
+            @"D:\PythOS-Workspace",
+            CancellationToken.None);
+
+        Assert.Equal(["new-tab", "codex"], process.Request!.Arguments);
+        Assert.Equal(@"D:\PythOS-Workspace", process.Request.WorkingDirectory);
+    }
+
+    [Fact]
     public async Task CatalogLookupMatchesHumanFacingNameCaseInsensitively()
     {
         IApplicationCatalog catalog = new InMemoryApplicationCatalog(
@@ -117,10 +132,21 @@ public sealed class ApplicationLifecycleTests
     {
         public string? LastExecutablePath { get; private set; }
 
-        public Task<int> LaunchAsync(string executablePath, string? arguments, CancellationToken cancellationToken)
+        public Task<int?> LaunchAsync(ApplicationStartRequest request, CancellationToken cancellationToken)
         {
-            LastExecutablePath = executablePath;
-            return Task.FromResult(processId);
+            LastExecutablePath = request.Locator;
+            return Task.FromResult<int?>(processId);
+        }
+    }
+
+    private sealed class RecordingProcessLauncher(int processId) : IProcessLauncher
+    {
+        public ApplicationStartRequest? Request { get; private set; }
+
+        public Task<int?> LaunchAsync(ApplicationStartRequest request, CancellationToken cancellationToken)
+        {
+            Request = request;
+            return Task.FromResult<int?>(processId);
         }
     }
 }

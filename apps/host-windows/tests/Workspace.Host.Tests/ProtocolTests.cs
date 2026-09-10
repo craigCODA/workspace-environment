@@ -655,8 +655,8 @@ public sealed class ProtocolTests : IDisposable
 
     private sealed class FixedProcessLauncher(int processId) : IProcessLauncher
     {
-        public Task<int> LaunchAsync(string executablePath, string? arguments, CancellationToken cancellationToken) =>
-            Task.FromResult(processId);
+        public Task<int?> LaunchAsync(ApplicationStartRequest request, CancellationToken cancellationToken) =>
+            Task.FromResult<int?>(processId);
     }
 
     private sealed class RecordingWindowFocusService : IWindowFocusService

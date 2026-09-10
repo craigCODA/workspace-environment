@@ -30,4 +30,4 @@ public sealed record ApplicationDescriptor(
     public string? Arguments { get; init; }
 }
 
-public sealed record ApplicationLaunchResult(string ApplicationId, int ProcessId);
+public sealed record ApplicationLaunchResult(string ApplicationId, int? ProcessId);
