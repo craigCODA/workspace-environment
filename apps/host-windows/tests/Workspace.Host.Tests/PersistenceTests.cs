@@ -1,3 +1,4 @@
+using System.Text;
 using Workspace.Host.Domain;
 using Workspace.Host.Persistence;
 using Workspace.Host.Windows;
@@ -54,6 +55,147 @@ public sealed class PersistenceTests : IDisposable
         Assert.Contains(surface.Relationships, relationship =>
             relationship.Type == "displays" && relationship.TargetId == window.Id);
         Assert.Single(migrated.MigrateToCurrent().Entities, entity => entity.Kind == EntityKinds.Surface);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(0)]
+    [InlineData(3)]
+    public void Migration_rejects_unsupported_schema_versions(int schemaVersion)
+    {
+        var document = new WorkspaceDocument(schemaVersion, []);
+
+        Assert.Throws<InvalidDataException>(() => document.MigrateToCurrent());
+    }
+
+    [Theory]
+    [MemberData(nameof(MalformedDocuments))]
+    public void Migration_rejects_malformed_workspace_structure(WorkspaceDocument document)
+    {
+        Assert.Throws<InvalidDataException>(() => document.MigrateToCurrent());
+    }
+
+    [Fact]
+    public async Task EnsureCurrent_rejects_malformed_deserialized_document_without_rewriting_it()
+    {
+        var path = Path.Combine(_tempDir, "malformed-workspace.json");
+        const string malformedJson = "{\"schemaVersion\":1,\"entities\":null}";
+        await File.WriteAllTextAsync(path, malformedJson, Encoding.UTF8);
+        var store = new AtomicWorkspaceStore(path);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            WorkspaceMigrator.EnsureCurrentAsync(store, CancellationToken.None));
+
+        Assert.Equal(malformedJson, await File.ReadAllTextAsync(path, Encoding.UTF8));
+    }
+
+    [Fact]
+    public void Migration_rejects_deterministic_surface_id_collision()
+    {
+        var window = WorkspaceEntity.CreateWindow("pc.window:edge", "Edge", "pc.application:edge");
+        var collidingEntity = WorkspaceEntity.CreateApplication(
+            $"{EntityKinds.Surface}:{window.Id}",
+            "Not a display surface");
+
+        Assert.Throws<InvalidDataException>(() =>
+            new WorkspaceDocument(1, [window, collidingEntity]).MigrateToCurrent());
+    }
+
+    [Fact]
+    public void Migration_rejects_duplicate_entity_ids()
+    {
+        var window = WorkspaceEntity.CreateWindow("pc.window:edge", "Edge", "pc.application:edge");
+        var duplicate = window with { Name = "Duplicate Edge" };
+
+        Assert.Throws<InvalidDataException>(() =>
+            new WorkspaceDocument(1, [window, duplicate]).MigrateToCurrent());
+    }
+
+    [Fact]
+    public void Migration_rejects_partial_surface_at_the_deterministic_id()
+    {
+        var window = WorkspaceEntity.CreateWindow("pc.window:edge", "Edge", "pc.application:edge");
+        var partialSurface = WorkspaceEntity.CreateDisplaySurface(
+            $"{EntityKinds.Surface}:{window.Id}",
+            "Edge",
+            PresentationState.Default);
+
+        Assert.Throws<InvalidDataException>(() =>
+            new WorkspaceDocument(1, [window, partialSurface]).MigrateToCurrent());
+    }
+
+    [Fact]
+    public void Migration_preserves_a_matching_deterministic_surface()
+    {
+        var window = WorkspaceEntity.CreateWindow("pc.window:edge", "Edge", "pc.application:edge");
+        var surface = WorkspaceEntity.CreateDisplaySurface(
+            $"{EntityKinds.Surface}:{window.Id}",
+            "Edge",
+            window.Presentation,
+            window.Id);
+
+        var migrated = new WorkspaceDocument(1, [window, surface]).MigrateToCurrent();
+
+        Assert.Equal(WorkspaceDocument.CurrentSchemaVersion, migrated.SchemaVersion);
+        Assert.Equal(2, migrated.Entities.Count);
+        Assert.Same(surface, Assert.Single(migrated.Entities, entity => entity.Id == surface.Id));
+    }
+
+    [Fact]
+    public async Task EnsureCurrent_saves_a_migration_once()
+    {
+        var window = WorkspaceEntity.CreateWindow("pc.window:edge", "Edge", "pc.application:edge");
+        var store = new ControlledWorkspaceStore(new WorkspaceDocument(1, [window]));
+
+        await WorkspaceMigrator.EnsureCurrentAsync(store, CancellationToken.None);
+        await WorkspaceMigrator.EnsureCurrentAsync(store, CancellationToken.None);
+
+        Assert.Equal(1, store.SaveCount);
+        Assert.Equal(WorkspaceDocument.CurrentSchemaVersion, store.Document.SchemaVersion);
+        Assert.Single(store.Document.Entities, entity => entity.Kind == EntityKinds.Surface);
+    }
+
+    [Fact]
+    public async Task EnsureCurrent_does_not_rewrite_a_current_document()
+    {
+        var current = new WorkspaceDocument(WorkspaceDocument.CurrentSchemaVersion, []);
+        var store = new ControlledWorkspaceStore(current);
+
+        await WorkspaceMigrator.EnsureCurrentAsync(store, CancellationToken.None);
+
+        Assert.Equal(0, store.SaveCount);
+        Assert.Same(current, store.Document);
+    }
+
+    [Fact]
+    public async Task EnsureCurrent_leaves_the_old_document_intact_when_persistence_fails()
+    {
+        var original = LegacyWindowDocument();
+        var store = new ControlledWorkspaceStore(original, _ => new IOException("Disk unavailable."));
+
+        await Assert.ThrowsAsync<IOException>(() =>
+            WorkspaceMigrator.EnsureCurrentAsync(store, CancellationToken.None));
+
+        Assert.Equal(1, store.SaveCount);
+        Assert.Same(original, store.Document);
+    }
+
+    [Fact]
+    public async Task EnsureCurrent_leaves_the_old_document_intact_when_persistence_is_cancelled()
+    {
+        var original = LegacyWindowDocument();
+        var store = new ControlledWorkspaceStore(original, cancellationToken =>
+            cancellationToken.IsCancellationRequested
+                ? new OperationCanceledException(cancellationToken)
+                : null);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            WorkspaceMigrator.EnsureCurrentAsync(store, cancellation.Token));
+
+        Assert.Equal(1, store.SaveCount);
+        Assert.Same(original, store.Document);
     }
 
     [Fact]
@@ -151,6 +293,32 @@ public sealed class PersistenceTests : IDisposable
         }
     }
 
+    public static IEnumerable<object[]> MalformedDocuments()
+    {
+        var valid = WorkspaceEntity.CreateWindow("pc.window:edge", "Edge", "pc.application:edge");
+
+        yield return [new WorkspaceDocument(1, null!)];
+        yield return [new WorkspaceDocument(1, [null!])];
+        yield return [new WorkspaceDocument(1, [valid with { Id = "" }])];
+        yield return [new WorkspaceDocument(1, [valid with { Kind = "" }])];
+        yield return [new WorkspaceDocument(1, [valid with { Name = "" }])];
+        yield return [new WorkspaceDocument(1, [valid with { Presentation = null! }])];
+        yield return [new WorkspaceDocument(1, [valid with { Relationships = null! }])];
+        yield return [new WorkspaceDocument(1, [valid with { Properties = null! }])];
+        yield return [new WorkspaceDocument(1, [valid with { Capabilities = null! }])];
+        yield return [new WorkspaceDocument(1, [valid with
+        {
+            Relationships = [new Relationship("displays", "")],
+        }])];
+    }
+
+    private static WorkspaceDocument LegacyWindowDocument()
+    {
+        return new WorkspaceDocument(
+            1,
+            [WorkspaceEntity.CreateWindow("pc.window:edge", "Edge", "pc.application:edge")]);
+    }
+
     private sealed class RecordingWindowCapture : IWindowCapture
     {
         private readonly HashSet<string> _active = [];
@@ -180,6 +348,31 @@ public sealed class PersistenceTests : IDisposable
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class ControlledWorkspaceStore(
+        WorkspaceDocument document,
+        Func<CancellationToken, Exception?>? saveFailure = null) : IWorkspaceStore
+    {
+        public WorkspaceDocument Document { get; private set; } = document;
+
+        public int SaveCount { get; private set; }
+
+        public Task<WorkspaceDocument> LoadAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(Document);
+
+        public Task SaveAsync(WorkspaceDocument document, CancellationToken cancellationToken)
+        {
+            SaveCount++;
+            var failure = saveFailure?.Invoke(cancellationToken);
+            if (failure is not null)
+            {
+                return Task.FromException(failure);
+            }
+
+            Document = document;
+            return Task.CompletedTask;
+        }
     }
 }
 

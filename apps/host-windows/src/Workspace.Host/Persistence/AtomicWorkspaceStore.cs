@@ -37,7 +37,10 @@ public sealed class AtomicWorkspaceStore : IWorkspaceStore
             JsonOptions,
             cancellationToken);
 
-        return document ?? throw new InvalidDataException($"Workspace document '{_path}' was empty or invalid.");
+        var loadedDocument = document
+            ?? throw new InvalidDataException($"Workspace document '{_path}' was empty or invalid.");
+        WorkspaceMigrator.ValidateDocument(loadedDocument);
+        return loadedDocument;
     }
 
     public async Task SaveAsync(WorkspaceDocument document, CancellationToken cancellationToken)
