@@ -46,6 +46,26 @@ public sealed class ProtocolTests : IDisposable
     }
 
     [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"applicationId\":\"  \"}")]
+    [InlineData("{\"profileId\":\"profile:notepad\",\"applicationId\":\"pc.application:notepad\"}")]
+    public void Application_open_payload_requires_exactly_one_nonblank_identity(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        Assert.Throws<JsonException>(() => ApplicationControlRequestParser.ParseOpen(document.RootElement));
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"windowEntityId\":\"\"}")]
+    public void Window_lifecycle_payload_requires_a_nonblank_window_identity(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        Assert.Throws<JsonException>(() => ApplicationControlRequestParser.ParseClose("close-1", document.RootElement));
+        Assert.Throws<JsonException>(() => ApplicationControlRequestParser.ParseRestart("restart-1", document.RootElement));
+    }
+
+    [Theory]
     [InlineData(null, true)]
     [InlineData("http://127.0.0.1:5173", true)]
     [InlineData("http://localhost:5173", true)]

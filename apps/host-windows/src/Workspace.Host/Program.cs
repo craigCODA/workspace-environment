@@ -59,7 +59,7 @@ var applicationControl = new ApplicationControlService(
     new ApplicationLauncher(new SystemProcessLauncher()),
     store,
     windowCatalog,
-    new Win32WindowLifecycleService(windowCatalog),
+    new Win32WindowLifecycleService(windowCatalog, store),
     new Win32WindowFocusService(windowCatalog, windowReconciler),
     applicationProfileStore,
     new ApplicationControlAuditStore(Path.Combine(

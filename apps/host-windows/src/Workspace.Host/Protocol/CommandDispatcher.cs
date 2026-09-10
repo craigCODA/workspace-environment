@@ -125,7 +125,7 @@ public sealed class CommandDispatcher(
             return Error(command.Id, "invalid_payload", "Profile save requires a profile payload.");
         var request = ApplicationControlRequestParser.ParseProfile(payload);
         var profile = new ApplicationLaunchProfile(request.Id, request.DisplayName, request.ApplicationId,
-            request.Arguments, request.WorkingDirectory, request.LaunchPolicy, request.PreferredSurfaceId,
+            request.Arguments, request.WorkingDirectory, request.LaunchPolicy!.Value, request.PreferredSurfaceId,
             request.PreferredPresentation);
         await RequireApplicationControl().SaveProfileAsync(profile, cancellationToken);
         return Result(command.Id!, profile);
