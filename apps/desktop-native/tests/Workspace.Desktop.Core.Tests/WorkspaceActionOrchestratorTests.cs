@@ -203,6 +203,93 @@ public sealed class WorkspaceActionOrchestratorTests
         Assert.Contains("--new-window, --title, PythOS", approval.Description);
     }
 
+    [Fact]
+    public async Task Launched_without_window_accepts_null_lifecycle_ids_and_narrates_the_partial_outcome()
+    {
+        await using var fixture = await CapabilityFixture.CreateAsync();
+        var output = new RecordingWorkspaceActionOutput();
+        var orchestrator = new WorkspaceActionOrchestrator(new ImmediateWorkspaceGateway(new
+        {
+            operationId = "open-1",
+            applicationEntityId = "pc.application:notepad",
+            windowEntityId = (string?)null,
+            surfaceEntityId = (string?)null,
+            disposition = "launchedWithoutWindow",
+            surfaceState = "notResolved",
+            focused = false,
+        }), output, fixture.Broker, fixture.WorkspaceIdentity);
+
+        await orchestrator.BeginAsync(new WorkspaceDirective("application.open",
+            JsonSerializer.SerializeToElement(new { applicationId = "pc.application:notepad" })), CancellationToken.None);
+        await orchestrator.RespondToApprovalAsync(WorkspaceApprovalDecision.AllowOnce, CancellationToken.None);
+
+        Assert.Contains("The application started, but its window is not available yet.", output.Messages);
+    }
+
+    [Fact]
+    public async Task Search_not_found_and_profile_delete_false_are_not_narrated_as_success()
+    {
+        var searchOutput = new RecordingWorkspaceActionOutput();
+        var search = new WorkspaceActionOrchestrator(new ImmediateWorkspaceGateway(new { status = "notFound", candidates = Array.Empty<object>() }), searchOutput);
+        await search.BeginAsync(new WorkspaceDirective("application.search", JsonSerializer.SerializeToElement(new { query = "Missing" })), CancellationToken.None);
+
+        await using var fixture = await CapabilityFixture.CreateAsync();
+        var deleteOutput = new RecordingWorkspaceActionOutput();
+        var delete = new WorkspaceActionOrchestrator(new ImmediateWorkspaceGateway(new { profileId = "profile:missing", deleted = false }), deleteOutput,
+            fixture.Broker, fixture.WorkspaceIdentity);
+        await delete.BeginAsync(new WorkspaceDirective("application.profile.delete", JsonSerializer.SerializeToElement(new { profileId = "profile:missing" })), CancellationToken.None);
+        await delete.RespondToApprovalAsync(WorkspaceApprovalDecision.AllowOnce, CancellationToken.None);
+
+        Assert.DoesNotContain(searchOutput.Messages, message => message.Contains("I found", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(deleteOutput.Messages, message => message.Contains("deleted", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Bind_approval_names_the_exact_surface_and_window()
+    {
+        await using var fixture = await CapabilityFixture.CreateAsync();
+        var output = new RecordingWorkspaceActionOutput();
+        var orchestrator = new WorkspaceActionOrchestrator(new ImmediateWorkspaceGateway(new { surfaceEntityId = "spatial.surface:west", windowEntityId = "pc.window:notepad" }), output,
+            fixture.Broker, fixture.WorkspaceIdentity);
+
+        await orchestrator.BeginAsync(new WorkspaceDirective("surface.bindWindow", JsonSerializer.SerializeToElement(new
+        {
+            surfaceEntityId = "spatial.surface:west", windowEntityId = "pc.window:notepad",
+        })), CancellationToken.None);
+
+        var approval = Assert.Single(output.Approvals);
+        Assert.Contains("spatial.surface:west", approval.Description);
+        Assert.Contains("pc.window:notepad", approval.Description);
+    }
+
+    [Fact]
+    public async Task Cancelled_approval_request_and_remember_clear_pending_state()
+    {
+        await using var fixture = await CapabilityFixture.CreateAsync();
+        using var requestCancellation = new CancellationTokenSource();
+        requestCancellation.Cancel();
+        var requestOutput = new CancellingApprovalOutput(requestCancellation.Token);
+        var request = new WorkspaceActionOrchestrator(new ImmediateWorkspaceGateway(ValidOpenResult()), requestOutput,
+            fixture.Broker, fixture.WorkspaceIdentity);
+
+        await request.BeginAsync(new WorkspaceDirective("application.open", JsonSerializer.SerializeToElement(new { applicationId = "pc.application:notepad" })), requestCancellation.Token);
+
+        Assert.Null(request.PendingApproval);
+        Assert.Contains("Workspace approval cancelled.", requestOutput.Messages);
+
+        using var rememberCancellation = new CancellationTokenSource();
+        var rememberOutput = new RecordingWorkspaceActionOutput();
+        var remember = new WorkspaceActionOrchestrator(new ImmediateWorkspaceGateway(ValidOpenResult()), rememberOutput,
+            fixture.Broker, fixture.WorkspaceIdentity);
+        await remember.BeginAsync(new WorkspaceDirective("application.open", JsonSerializer.SerializeToElement(new { applicationId = "pc.application:notepad" })), CancellationToken.None);
+        rememberCancellation.Cancel();
+
+        await remember.RespondToApprovalAsync(WorkspaceApprovalDecision.Remember, rememberCancellation.Token);
+
+        Assert.Null(remember.PendingApproval);
+        Assert.Contains("Workspace approval cancelled.", rememberOutput.Messages);
+    }
+
     private static object ValidOpenResult() => new
     {
         operationId = "op-1",
@@ -282,6 +369,26 @@ public sealed class WorkspaceActionOrchestratorTests
         public Task ReportActivityAsync(string message, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task SpeakAsync(string message, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class CancellingApprovalOutput(CancellationToken cancelledToken) : IWorkspaceActionOutput
+    {
+        public ConcurrentQueue<string> Messages { get; } = new();
+
+        public Task RequestApprovalAsync(WorkspacePendingApproval approval, CancellationToken cancellationToken) =>
+            Task.FromCanceled(cancelledToken);
+
+        public Task ReportActivityAsync(string message, CancellationToken cancellationToken)
+        {
+            Messages.Enqueue(message);
+            return Task.CompletedTask;
+        }
+
+        public Task SpeakAsync(string message, CancellationToken cancellationToken)
+        {
+            Messages.Enqueue(message);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class CapabilityFixture : IAsyncDisposable

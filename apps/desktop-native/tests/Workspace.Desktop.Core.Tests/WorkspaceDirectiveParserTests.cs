@@ -58,6 +58,27 @@ public sealed class WorkspaceDirectiveParserTests
         Assert.Empty(result.Directives);
     }
 
+    [Fact]
+    public void Focus_uses_the_renderer_supported_exact_window_target()
+    {
+        var result = WorkspaceDirectiveParser.Parse(
+            "Focusing it. [[workspace:{\"command\":\"window.focus\",\"args\":{\"windowEntityId\":\"pc.window:notepad\"}}]]");
+
+        Assert.Equal("pc.window:notepad", Assert.Single(result.Directives).Arguments.GetProperty("windowEntityId").GetString());
+    }
+
+    [Fact]
+    public void Rejects_shell_like_profile_arguments_and_host_invalid_geometry()
+    {
+        var shellArgument = WorkspaceDirectiveParser.Parse(
+            "No. [[workspace:{\"command\":\"application.profile.save\",\"args\":{\"id\":\"profile:notepad\",\"displayName\":\"Notepad\",\"applicationId\":\"pc.application:notepad\",\"arguments\":[\"cmd.exe /c whoami\"],\"launchPolicy\":\"reuseOrLaunch\"}}]]");
+        var tinyRotation = WorkspaceDirectiveParser.Parse(
+            "No. [[workspace:{\"command\":\"application.open\",\"args\":{\"applicationId\":\"pc.application:notepad\",\"presentation\":{\"position\":{\"x\":0,\"y\":0,\"z\":0},\"rotation\":{\"x\":0.0000001,\"y\":0,\"z\":0,\"w\":0},\"size\":{\"x\":1,\"y\":1,\"z\":1}}}}]]");
+
+        Assert.Empty(shellArgument.Directives);
+        Assert.Empty(tinyRotation.Directives);
+    }
+
     [Theory]
     [InlineData("shell.run")]
     [InlineData("application.launch")]

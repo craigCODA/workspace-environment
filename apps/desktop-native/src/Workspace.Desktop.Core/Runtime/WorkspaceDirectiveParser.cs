@@ -11,6 +11,12 @@ public sealed record WorkspaceDirectiveResult(string SpokenText, IReadOnlyList<W
 public static class WorkspaceDirectiveParser
 {
     public const int MaximumDirectivePayloadBytes = 64 * 1024;
+    private const int MaximumProfileArgumentCount = 64;
+    private const int MaximumProfileArgumentLength = 4096;
+
+    private static readonly Regex ShellCommandPattern = new(
+        @"^\s*(?:""?cmd(?:\.exe)?""?\s+/(?:c|k)\b|""?(?:powershell|pwsh)(?:\.exe)?""?\s+-(?:c|command|encodedcommand|enc|file)\b|""?(?:bash|sh|zsh|ksh)(?:\.exe)?""?\s+-c\b|""?wsl(?:\.exe)?""?\s+(?:--exec|-e)\b)",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly HashSet<string> AllowedCommands = new(StringComparer.Ordinal)
     {
@@ -165,9 +171,8 @@ public static class WorkspaceDirectiveParser
     }
 
     private static bool ValidFocus(JsonElement args) =>
-        HasOnly(args, "windowEntityId", "applicationId")
-        && IsId(args, "windowEntityId", "pc.window:")
-        && IsId(args, "applicationId", "pc.application:");
+        HasOnly(args, "windowEntityId")
+        && IsId(args, "windowEntityId", "pc.window:");
 
     private static bool ValidProfile(JsonElement args)
     {
@@ -177,13 +182,12 @@ public static class WorkspaceDirectiveParser
             || !OptionalNullableText(args, "preferredSurfaceId", "spatial.surface:")
             || !HasLaunchPolicy(args, "launchPolicy")
             || !args.TryGetProperty("arguments", out var arguments)
-            || arguments.ValueKind != JsonValueKind.Array
-            || arguments.EnumerateArray().Any(argument => argument.ValueKind != JsonValueKind.String || argument.GetString()?.Contains('\0') == true)) return false;
+            || !ValidArguments(arguments)) return false;
 
         if (args.TryGetProperty("workingDirectory", out var workingDirectory)
             && workingDirectory.ValueKind != JsonValueKind.Null
-            && (workingDirectory.ValueKind != JsonValueKind.String || !Path.IsPathRooted(workingDirectory.GetString())
-                || workingDirectory.GetString()?.Contains('\0') == true)) return false;
+            && (workingDirectory.ValueKind != JsonValueKind.String || workingDirectory.GetString() is not { } directory
+                || !Path.IsPathFullyQualified(directory) || directory.Contains('\0'))) return false;
         return !args.TryGetProperty("preferredPresentation", out var presentation)
             || presentation.ValueKind == JsonValueKind.Null || ValidPresentation(presentation);
     }
@@ -199,9 +203,56 @@ public static class WorkspaceDirectiveParser
             || !Finite(size, "x") || !Finite(size, "y") || !Finite(size, "z")) return false;
         if (size.GetProperty("x").GetDouble() <= 0 || size.GetProperty("y").GetDouble() <= 0 || size.GetProperty("z").GetDouble() <= 0) return false;
         var magnitude = rotation.EnumerateObject().Sum(component => component.Value.GetDouble() * component.Value.GetDouble());
-        return magnitude > 0
+        return magnitude > 1e-12
             && OptionalText(value, "parentPresentationId", "")
             && OptionalText(value, "representation", "");
+    }
+
+    private static bool ValidArguments(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Array) return false;
+        var arguments = value.EnumerateArray().ToArray();
+        if (arguments.Length > MaximumProfileArgumentCount) return false;
+
+        foreach (var argument in arguments)
+        {
+            if (argument.ValueKind != JsonValueKind.String || argument.GetString() is not { } text
+                || text.Length > MaximumProfileArgumentLength || text.Contains('\0')
+                || LooksLikeShellCommand(text) || LooksLikeExecutablePath(text)
+                || text.Contains("&&", StringComparison.Ordinal)
+                || text.Contains("||", StringComparison.Ordinal)
+                || text.Contains('|') || text.Contains('<') || text.Contains('>')
+                || text.Contains('\r') || text.Contains('\n'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool LooksLikeShellCommand(string value)
+    {
+        if (ShellCommandPattern.IsMatch(value)) return true;
+        var token = value.Trim().Trim('"');
+        return token.Equals("cmd", StringComparison.OrdinalIgnoreCase)
+            || token.Equals("cmd.exe", StringComparison.OrdinalIgnoreCase)
+            || token.Equals("powershell", StringComparison.OrdinalIgnoreCase)
+            || token.Equals("powershell.exe", StringComparison.OrdinalIgnoreCase)
+            || token.Equals("pwsh", StringComparison.OrdinalIgnoreCase)
+            || token.Equals("pwsh.exe", StringComparison.OrdinalIgnoreCase)
+            || token.Equals("bash", StringComparison.OrdinalIgnoreCase)
+            || token.Equals("bash.exe", StringComparison.OrdinalIgnoreCase)
+            || token.Equals("sh", StringComparison.OrdinalIgnoreCase)
+            || token.Equals("wsl", StringComparison.OrdinalIgnoreCase)
+            || token.Equals("wsl.exe", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeExecutablePath(string value)
+    {
+        var trimmed = value.Trim().Trim('"');
+        if (!Path.IsPathFullyQualified(trimmed)) return false;
+        return Path.GetExtension(trimmed).ToLowerInvariant() is ".exe" or ".com" or ".bat" or ".cmd" or ".ps1" or ".vbs";
     }
 
     private static bool HasOnly(JsonElement value, params string[] allowed)

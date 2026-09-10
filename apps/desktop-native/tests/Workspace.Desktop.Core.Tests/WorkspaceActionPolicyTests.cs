@@ -41,6 +41,15 @@ public sealed class WorkspaceActionPolicyTests
     }
 
     [Fact]
+    public void Remembered_focus_scope_is_specific_to_the_exact_window()
+    {
+        var scope = WorkspaceActionPolicy.ScopeFor(new WorkspaceDirective("window.focus",
+            JsonSerializer.SerializeToElement(new { windowEntityId = "pc.window:notepad" })), "workspace:one");
+
+        Assert.Equal("workspace:one|window:pc.window:notepad", scope);
+    }
+
+    [Fact]
     public void Replacement_has_a_separate_fresh_requirement_after_the_launch_requirement()
     {
         var action = new WorkspaceDirective("application.open", JsonSerializer.SerializeToElement(new

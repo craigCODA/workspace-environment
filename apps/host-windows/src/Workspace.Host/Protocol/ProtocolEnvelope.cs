@@ -11,6 +11,7 @@ public sealed record ProtocolEnvelope
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 
     public int Protocol { get; init; } = CurrentVersion;

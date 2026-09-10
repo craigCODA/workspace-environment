@@ -67,6 +67,12 @@ public sealed class WorkspaceActionOrchestrator
     {
         var pending = _pendingApproval;
         if (pending is null) return;
+        if (cancellationToken.IsCancellationRequested)
+        {
+            if (ReferenceEquals(_pendingApproval, pending)) _pendingApproval = null;
+            await SafeSpeakAsync("Workspace approval cancelled.", CancellationToken.None);
+            return;
+        }
 
         if (decision == WorkspaceApprovalDecision.Deny)
         {
@@ -85,6 +91,13 @@ public sealed class WorkspaceActionOrchestrator
             try
             {
                 await _capabilities.RememberAsync(new CapabilityGrant(pending.Policy.Capability, pending.Scope, null), cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException)
+            {
+                if (ReferenceEquals(_pendingApproval, pending)) _pendingApproval = null;
+                await SafeSpeakAsync("Workspace approval cancelled.", CancellationToken.None);
+                return;
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
@@ -136,6 +149,11 @@ public sealed class WorkspaceActionOrchestrator
         try
         {
             await _output.RequestApprovalAsync(pending, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            if (ReferenceEquals(_pendingApproval, pending)) _pendingApproval = null;
+            await SafeSpeakAsync("Workspace approval cancelled.", CancellationToken.None);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -232,19 +250,17 @@ public sealed class WorkspaceActionOrchestrator
         if (value.ValueKind != JsonValueKind.Object && command != "application.profile.list") return false;
         var valid = command switch
         {
-            "application.open" => HasText(value, "operationId") && HasId(value, "applicationEntityId", "pc.application:")
-                && OptionalId(value, "windowEntityId", "pc.window:") && OptionalId(value, "surfaceEntityId", "spatial.surface:")
-                && OneOf(value, "disposition", "reused", "launched", "launchedWithoutWindow", "launched-without-window")
-                && OneOf(value, "surfaceState", "available", "unavailable", "notResolved", "not-resolved") && HasBoolean(value, "focused"),
+            "application.open" => ValidOpenResult(value),
             "application.close" => HasText(value, "operationId") && HasId(value, "windowEntityId", "pc.window:")
-                && OneOf(value, "state", "closed", "closePending", "close-pending", "notRunning", "not-running"),
+                && OneOf(value, "state", "closed", "closePending", "notRunning"),
             "application.restart" => HasText(value, "operationId")
-                && OneOf(value, "state", "open", "closed", "closePending", "close-pending", "notRunning", "not-running", "launchedWithoutWindow", "launched-without-window"),
+                && OneOf(value, "state", "open", "closed", "closePending", "notRunning", "launchedWithoutWindow"),
             "window.focus" => HasId(value, "entityId", "pc.window:"),
             "surface.bindWindow" => HasId(value, "surfaceEntityId", "spatial.surface:") && HasId(value, "windowEntityId", "pc.window:"),
             "application.profile.save" => HasId(value, "id", "profile:"),
             "application.profile.delete" => HasId(value, "profileId", "profile:") && HasBoolean(value, "deleted"),
-            "application.search" => HasText(value, "status") && value.TryGetProperty("candidates", out var candidates) && candidates.ValueKind == JsonValueKind.Array,
+            "application.search" => OneOf(value, "status", "resolved", "ambiguous", "notFound")
+                && value.TryGetProperty("candidates", out var candidates) && candidates.ValueKind == JsonValueKind.Array,
             "application.profile.list" => value.ValueKind == JsonValueKind.Array,
             _ => false,
         };
@@ -286,11 +302,39 @@ public sealed class WorkspaceActionOrchestrator
     private static Dictionary<string, object?> ToDictionary(JsonElement objectElement) => objectElement.EnumerateObject().ToDictionary(
         property => property.Name, property => JsonSerializer.Deserialize<object>(property.Value.GetRawText()), StringComparer.Ordinal);
 
+    private static bool ValidOpenResult(JsonElement value)
+    {
+        if (!HasText(value, "operationId") || !HasId(value, "applicationEntityId", "pc.application:")
+            || !OptionalNullableId(value, "windowEntityId", "pc.window:")
+            || !OptionalNullableId(value, "surfaceEntityId", "spatial.surface:")
+            || !OneOf(value, "disposition", "reused", "launched", "launchedWithoutWindow")
+            || !OneOf(value, "surfaceState", "available", "unavailable", "notResolved")
+            || !HasBoolean(value, "focused"))
+        {
+            return false;
+        }
+
+        var disposition = ReadText(value, "disposition");
+        var surfaceState = ReadText(value, "surfaceState");
+        if (disposition == "launchedWithoutWindow")
+        {
+            return !HasId(value, "windowEntityId", "pc.window:")
+                && !HasId(value, "surfaceEntityId", "spatial.surface:")
+                && surfaceState == "notResolved"
+                && value.GetProperty("focused").ValueKind == JsonValueKind.False;
+        }
+
+        return HasId(value, "windowEntityId", "pc.window:")
+            && HasId(value, "surfaceEntityId", "spatial.surface:")
+            && surfaceState is "available" or "unavailable";
+    }
+
     private static string DescribeApproval(WorkspaceDirective directive, string? displayName, WorkspaceActionPolicyDecision policy)
     {
         var application = displayName ?? FirstText(directive.Arguments, "applicationId", "profileId") ?? "that application";
         var profile = FirstText(directive.Arguments, "id", "profileId") ?? "that profile";
         var surface = FirstText(directive.Arguments, "targetSurfaceId", "surfaceEntityId", "preferredSurfaceId");
+        var window = FirstText(directive.Arguments, "windowEntityId");
         var arguments = directive.Arguments.TryGetProperty("arguments", out var items) && items.ValueKind == JsonValueKind.Array
             ? string.Join(", ", items.EnumerateArray().Select(item => item.GetString() ?? string.Empty)) : null;
         var target = surface is null ? application : $"{application} on {surface}";
@@ -299,8 +343,8 @@ public sealed class WorkspaceActionOrchestrator
             "application.launch" => $"I need approval to open {target}. It may start a new process."
                 + (arguments is null ? string.Empty : $" Arguments: {arguments}."),
             "surface.replace" => $"I need separate approval to replace the current content on {surface ?? "that display"}.",
-            "window.focus" => $"I need approval to focus {application}.",
-            "surface.bind" => $"I need approval to bind {application} to {surface ?? "that display"}.",
+            "window.focus" => $"I need approval to focus {window ?? application}.",
+            "surface.bind" => $"I need approval to bind {window ?? application} to {surface ?? "that display"}.",
             "application.close" => $"I need approval to close {FirstText(directive.Arguments, "windowEntityId") ?? "that application"}.",
             "application.restart" => $"I need approval to restart {FirstText(directive.Arguments, "windowEntityId", "profileId") ?? "that application"}.",
             "application.profile.edit" => $"I need approval to edit profile {profile} for {FirstText(directive.Arguments, "applicationId") ?? application}"
@@ -313,7 +357,8 @@ public sealed class WorkspaceActionOrchestrator
 
     private static bool HasText(JsonElement value, string name) => ReadText(value, name) is { Length: > 0 } text && !string.IsNullOrWhiteSpace(text);
     private static bool HasId(JsonElement value, string name, string prefix) => HasText(value, name) && ReadText(value, name)!.StartsWith(prefix, StringComparison.Ordinal);
-    private static bool OptionalId(JsonElement value, string name, string prefix) => !value.TryGetProperty(name, out _) || HasId(value, name, prefix);
+    private static bool OptionalNullableId(JsonElement value, string name, string prefix) =>
+        !value.TryGetProperty(name, out var property) || property.ValueKind == JsonValueKind.Null || HasId(value, name, prefix);
     private static bool HasBoolean(JsonElement value, string name) => value.TryGetProperty(name, out var property) && property.ValueKind is JsonValueKind.True or JsonValueKind.False;
     private static bool OneOf(JsonElement value, string name, params string[] allowed) => allowed.Contains(ReadText(value, name), StringComparer.Ordinal);
     private static string? FirstText(JsonElement value, params string[] names) => names.Select(name => ReadText(value, name)).FirstOrDefault(text => !string.IsNullOrWhiteSpace(text));

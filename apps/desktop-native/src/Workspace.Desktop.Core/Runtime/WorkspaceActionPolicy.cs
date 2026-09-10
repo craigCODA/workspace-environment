@@ -50,7 +50,7 @@ public static class WorkspaceActionPolicy
         var semantic = policy.Capability switch
         {
             "application.launch" => FirstText(directive.Arguments, "applicationId", "profileId"),
-            "window.focus" => FirstText(directive.Arguments, "applicationId"),
+            "window.focus" => FirstText(directive.Arguments, "windowEntityId"),
             "surface.bind" or "surface.replace" => FirstText(directive.Arguments, "surfaceEntityId", "targetSurfaceId"),
             "application.profile.edit" => FirstText(directive.Arguments, "id", "profileId"),
             "application.close" or "application.restart" => FirstText(directive.Arguments, "windowEntityId", "profileId"),
@@ -58,7 +58,8 @@ public static class WorkspaceActionPolicy
         };
         var kind = policy.Capability switch
         {
-            "application.launch" or "window.focus" => "application",
+            "application.launch" => "application",
+            "window.focus" => "window",
             "application.profile.edit" => "profile",
             "surface.bind" or "surface.replace" => "surface",
             "application.close" or "application.restart" => "window",

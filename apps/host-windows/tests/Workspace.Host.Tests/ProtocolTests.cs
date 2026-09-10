@@ -29,6 +29,20 @@ public sealed class ProtocolTests : IDisposable
     }
 
     [Fact]
+    public void Application_control_enum_results_use_camel_case_strings_on_the_wire()
+    {
+        var envelope = ProtocolEnvelope.Result("open-1", new ApplicationOpenResult(
+            "open-1", "pc.application:notepad", null, null, 42,
+            ApplicationOpenDisposition.LaunchedWithoutWindow,
+            ApplicationSurfaceState.NotResolved, false));
+
+        var json = JsonSerializer.Serialize(envelope, ProtocolEnvelope.SerializerOptions);
+
+        Assert.Contains("\"disposition\":\"launchedWithoutWindow\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"surfaceState\":\"notResolved\"", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Application_open_payload_uses_literal_json_and_rejects_unexpected_fields()
     {
         var accepted = ApplicationControlRequestParser.ParseOpen(

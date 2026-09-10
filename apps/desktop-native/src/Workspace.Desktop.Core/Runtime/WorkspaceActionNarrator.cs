@@ -15,8 +15,8 @@ public static class WorkspaceActionNarrator
             "application.restart" => DescribeRestart(name, result),
             "surface.bindWindow" => "The window is bound to that display.",
             "application.profile.save" => "The application profile is saved.",
-            "application.profile.delete" => "The application profile is deleted.",
-            "application.search" => "I found the matching application.",
+            "application.profile.delete" => DescribeProfileDelete(result),
+            "application.search" => DescribeSearch(result),
             "application.profile.list" => "I found the saved application profiles.",
             _ => "The workspace action completed.",
         };
@@ -30,7 +30,7 @@ public static class WorkspaceActionNarrator
         var focused = result.TryGetProperty("focused", out var focusedElement)
             && focusedElement.ValueKind == JsonValueKind.True;
         var surfaceState = ReadText(result, "surfaceState");
-        if (disposition is "launched-without-window" or "launchedWithoutWindow")
+        if (disposition == "launchedWithoutWindow")
             return $"{name} started, but its window is not available yet.";
         if (surfaceState is "unavailable")
             return $"{name} is open, but its display is unavailable.";
@@ -42,15 +42,28 @@ public static class WorkspaceActionNarrator
     private static string DescribeClose(string name, JsonElement result) => ReadText(result, "state") switch
     {
         "closed" => $"{name} is closed.",
-        "close-pending" or "closePending" => $"{name} is waiting for its normal close.",
-        "not-running" or "notRunning" => $"{name} is not running.",
+        "closePending" => $"{name} is waiting for its normal close.",
+        "notRunning" => $"{name} is not running.",
         _ => DescribeFailure(),
     };
 
     private static string DescribeRestart(string name, JsonElement result) => ReadText(result, "state") switch
     {
         "open" => $"{name} restarted.",
-        "close-pending" or "closePending" => $"{name} is waiting for its normal close, so it was not restarted.",
+        "closePending" => $"{name} is waiting for its normal close, so it was not restarted.",
+        _ => DescribeFailure(),
+    };
+
+    private static string DescribeProfileDelete(JsonElement result) =>
+        result.TryGetProperty("deleted", out var deleted) && deleted.ValueKind == JsonValueKind.True
+            ? "The application profile is deleted."
+            : "The application profile was not found.";
+
+    private static string DescribeSearch(JsonElement result) => ReadText(result, "status") switch
+    {
+        "resolved" => "I found the matching application.",
+        "ambiguous" => "I found more than one application. Please choose one.",
+        "notFound" => "I couldn't find that application.",
         _ => DescribeFailure(),
     };
 
