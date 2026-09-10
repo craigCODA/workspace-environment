@@ -27,6 +27,10 @@ var store = new AtomicWorkspaceStore(Path.Combine(
     localData,
     "WorkspaceEnvironment",
     "workspace.json"));
+var applicationProfileStore = new AtomicApplicationProfileStore(Path.Combine(
+    localData,
+    "WorkspaceEnvironment",
+    "application-profiles.json"));
 var applicationCatalog = new WindowsApplicationCatalog();
 var knownApplications = (await applicationCatalog.ListAsync(CancellationToken.None))
     .ToDictionary(
