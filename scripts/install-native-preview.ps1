@@ -1,10 +1,12 @@
 [CmdletBinding()]
 param(
-    [string]$SourceRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$SourceRoot = '',
     [switch]$SkipLaunch
 )
 
 $ErrorActionPreference = 'Stop'
+$repoRoot = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($SourceRoot)) { $SourceRoot = $repoRoot }
 $resolvedSourceRoot = [System.IO.Path]::GetFullPath($SourceRoot)
 $stateRoot = Join-Path $env:LOCALAPPDATA 'WorkspaceEnvironment'
 $versionsRoot = Join-Path $stateRoot 'versions'
