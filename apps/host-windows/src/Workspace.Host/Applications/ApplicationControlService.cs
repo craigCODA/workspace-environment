@@ -22,7 +22,8 @@ public sealed record ApplicationOpenRequest(
     ApplicationLaunchPolicy? LaunchPolicy,
     string? SurfaceEntityId,
     bool? ReplaceOccupied,
-    string? ApprovalSource = null);
+    string? ApprovalSource = null,
+    PresentationState? Presentation = null);
 
 public sealed record ApplicationOpenResult(
     string OperationId,
@@ -63,7 +64,9 @@ public sealed record ApplicationOpenProtocolRequest(
     string? ApplicationId,
     string? ProfileId,
     ApplicationLaunchPolicy? LaunchPolicy,
+    string? TargetSurfaceId,
     string? SurfaceEntityId,
+    PresentationState? Presentation,
     bool? ReplaceOccupied,
     string? ApprovalSource);
 
@@ -91,6 +94,8 @@ public static class ApplicationControlRequestParser
         var request = Deserialize<ApplicationOpenProtocolRequest>(payload);
         if (HasText(request.ApplicationId) == HasText(request.ProfileId))
             throw new JsonException("Application open requires exactly one applicationId or profileId.");
+        if (HasText(request.TargetSurfaceId) && HasText(request.SurfaceEntityId))
+            throw new JsonException("Use targetSurfaceId or legacy surfaceEntityId, not both.");
         return request;
     }
 
@@ -479,6 +484,7 @@ public sealed class ApplicationControlService(
             profile?.WorkingDirectory,
             request.LaunchPolicy ?? profile?.LaunchPolicy ?? ApplicationLaunchPolicy.ReuseOrLaunch,
             request.SurfaceEntityId ?? profile?.PreferredSurfaceId,
+            request.Presentation ?? profile?.PreferredPresentation,
             profile?.PreferredPresentation,
             profile?.Id);
     }
@@ -534,11 +540,11 @@ public sealed class ApplicationControlService(
             ?? $"spatial.surface:{windowId}";
         if (document.Entities.All(entity => entity.Id != surfaceId))
             document.Entities.Add(WorkspaceEntity.CreateDisplaySurface(surfaceId, surfaceId,
-                launch.PreferredPresentation ?? PresentationState.Default));
-        else if (launch.PreferredPresentation is not null)
+                launch.NewSurfacePresentation ?? PresentationState.Default));
+        else if (launch.ProfilePreferredPresentation is not null)
         {
             var index = document.Entities.FindIndex(entity => entity.Id == surfaceId);
-            document.Entities[index] = document.Entities[index] with { Presentation = launch.PreferredPresentation };
+            document.Entities[index] = document.Entities[index] with { Presentation = launch.ProfilePreferredPresentation };
         }
         return surfaceId;
     }
@@ -586,7 +592,8 @@ public sealed class ApplicationControlService(
         string? WorkingDirectory,
         ApplicationLaunchPolicy LaunchPolicy,
         string? SurfaceEntityId,
-        PresentationState? PreferredPresentation,
+        PresentationState? NewSurfacePresentation,
+        PresentationState? ProfilePreferredPresentation,
         string? ProfileId);
 
     private static void EnsureSurfaceCanBind(

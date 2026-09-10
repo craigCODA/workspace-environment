@@ -107,6 +107,39 @@ public sealed class ApplicationControlTests
     }
 
     [Fact]
+    public async Task Open_uses_explicit_presentation_only_when_it_creates_a_new_surface()
+    {
+        var fixture = ApplicationControlFixture.WithVisibleWindow(
+            "app:notepad", "pc.window:notepad", "spatial.surface:right");
+        var presentation = PresentationState.Default with { Position = new Vec3(4.2, 1.4, -3) };
+
+        var result = await fixture.Service.OpenAsync(new ApplicationOpenRequest(
+            "op-new-surface", "app:notepad", null, ApplicationLaunchPolicy.ReuseOrLaunch,
+            null, null, Presentation: presentation), CancellationToken.None);
+
+        Assert.Equal("spatial.surface:pc.window:notepad", result.SurfaceEntityId);
+        Assert.Equal(presentation, fixture.Store.Document.Entities
+            .Single(entity => entity.Id == result.SurfaceEntityId).Presentation);
+    }
+
+    [Fact]
+    public async Task Open_does_not_apply_explicit_presentation_to_an_existing_target_surface()
+    {
+        var fixture = ApplicationControlFixture.WithVisibleWindow(
+            "app:notepad", "pc.window:notepad", "spatial.surface:right");
+        var original = fixture.Store.Document.Entities.Single(entity => entity.Id == "spatial.surface:right").Presentation;
+        var requested = PresentationState.Default with { Position = new Vec3(9, 9, 9) };
+
+        var result = await fixture.Service.OpenAsync(new ApplicationOpenRequest(
+            "op-existing-surface", "app:notepad", null, ApplicationLaunchPolicy.ReuseOrLaunch,
+            "spatial.surface:right", null, Presentation: requested), CancellationToken.None);
+
+        Assert.Equal("spatial.surface:right", result.SurfaceEntityId);
+        Assert.Equal(original, fixture.Store.Document.Entities
+            .Single(entity => entity.Id == "spatial.surface:right").Presentation);
+    }
+
+    [Fact]
     public async Task Open_rejects_an_occupied_surface_before_attempting_a_new_instance_launch()
     {
         var fixture = ApplicationControlFixture.WithOccupiedSurface();

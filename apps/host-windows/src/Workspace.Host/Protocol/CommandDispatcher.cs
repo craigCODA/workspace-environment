@@ -148,8 +148,9 @@ public sealed class CommandDispatcher(
         if (string.IsNullOrWhiteSpace(request.ApplicationId) && string.IsNullOrWhiteSpace(request.ProfileId))
             return Error(command.Id, "invalid_target", "Application open requires an application id or profile id.");
         var result = await RequireApplicationControl().OpenAsync(new ApplicationOpenRequest(command.Id!,
-            request.ApplicationId, request.ProfileId, request.LaunchPolicy, request.SurfaceEntityId,
-            request.ReplaceOccupied, request.ApprovalSource), cancellationToken);
+            request.ApplicationId, request.ProfileId, request.LaunchPolicy,
+            request.TargetSurfaceId ?? request.SurfaceEntityId,
+            request.ReplaceOccupied, request.ApprovalSource, request.Presentation), cancellationToken);
         return Result(command.Id!, result);
     }
 

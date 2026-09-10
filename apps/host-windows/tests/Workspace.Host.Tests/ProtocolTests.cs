@@ -45,6 +45,21 @@ public sealed class ProtocolTests : IDisposable
             """).RootElement));
     }
 
+    [Fact]
+    public void Application_open_accepts_canonical_target_surface_and_rejects_two_surface_field_names()
+    {
+        var accepted = ApplicationControlRequestParser.ParseOpen(JsonDocument.Parse("""
+        {"applicationId":"pc.application:notepad","targetSurfaceId":"spatial.surface:right","presentation":{"position":{"x":1,"y":2,"z":3},"rotation":{"x":0,"y":0,"z":0,"w":1},"size":{"x":3.2,"y":1.8,"z":1},"representation":"application-surface"}}
+        """).RootElement);
+
+        Assert.Equal("spatial.surface:right", accepted.TargetSurfaceId);
+        Assert.NotNull(accepted.Presentation);
+
+        Assert.Throws<JsonException>(() => ApplicationControlRequestParser.ParseOpen(JsonDocument.Parse("""
+        {"applicationId":"pc.application:notepad","targetSurfaceId":"spatial.surface:right","surfaceEntityId":"spatial.surface:left"}
+        """).RootElement));
+    }
+
     [Theory]
     [InlineData("{}")]
     [InlineData("{\"applicationId\":\"  \"}")]
