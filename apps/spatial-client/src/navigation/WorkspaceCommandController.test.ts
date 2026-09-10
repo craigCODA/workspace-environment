@@ -107,3 +107,88 @@ test('uses the semantic window target for focus rather than leaking it into payl
 
   assert.deepEqual(calls, [['window.focus', 'pc.window:notepad']]);
 });
+
+test('rejects a missing or blank native request ID before every host call', async () => {
+  const calls: unknown[][] = [];
+  const controller = new WorkspaceCommandController(
+    { sendCommand: async (...args: unknown[]) => { calls.push(args); return {}; } }, () => null,
+  );
+
+  for (const id of [undefined, '', '   ', 1]) {
+    const result = await controller.handle({ id, command: 'application.open', args: { applicationId: 'app:notepad' } });
+    assert.equal(result.ok, false);
+  }
+  assert.deepEqual(calls, []);
+});
+
+test('forwards complete explicit presentation state without dropping optional fields', async () => {
+  const calls: unknown[][] = [];
+  const explicit = {
+    position: { x: 1, y: 2, z: 3 },
+    rotation: { x: 0.1, y: 0.2, z: 0.3, w: 0.4 },
+    size: { x: 3.2, y: 1.8, z: 0.035 },
+    parentPresentationId: 'spatial.room:desk',
+    representation: 'screen',
+  };
+  const controller = new WorkspaceCommandController(
+    { sendCommand: async (...args: unknown[]) => { calls.push(args); return {}; } }, () => null,
+  );
+
+  const result = await controller.handle({
+    id: 'complete-presentation', command: 'application.open',
+    args: { applicationId: 'app:notepad', presentation: explicit },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls[0]?.[2], { applicationId: 'app:notepad', presentation: explicit });
+});
+
+test('places a default surface exactly three metres along the pitched camera forward vector', async () => {
+  const calls: unknown[][] = [];
+  const controller = new WorkspaceCommandController(
+    { sendCommand: async (...args: unknown[]) => { calls.push(args); return {}; } }, () => null,
+    { cameraPose: () => ({ position: { x: 1, y: 2, z: 3 }, yaw: Math.PI / 2, pitch: Math.PI / 6 }) },
+  );
+
+  await controller.handle({ id: 'pitched', command: 'application.open', args: { applicationId: 'app:notepad' } });
+
+  const target = (calls[0]?.[2] as { presentation: { position: { x: number; y: number; z: number } } }).presentation.position;
+  assert.ok(Math.abs(target.x + 1.598076211) < 0.000001);
+  assert.ok(Math.abs(target.y - 3.5) < 0.000001);
+  assert.ok(Math.abs(target.z - 3) < 0.000001);
+});
+
+test('validates search, restart, and profile save payloads before sending', async () => {
+  const calls: unknown[][] = [];
+  const controller = new WorkspaceCommandController(
+    { sendCommand: async (...args: unknown[]) => { calls.push(args); return {}; } }, () => null,
+    { surfaceIds: () => ['spatial.surface:right'] },
+  );
+  const validProfile = {
+    id: 'profile:notes', displayName: 'Notes', applicationId: 'app:notepad', arguments: ['--new'],
+    workingDirectory: 'C:\\Workspace', launchPolicy: 'reuseOrLaunch',
+    preferredSurfaceId: 'spatial.surface:right',
+    preferredPresentation: {
+      position: { x: 1, y: 2, z: 3 }, rotation: { x: 0, y: 0, z: 0, w: 1 },
+      size: { x: 3.2, y: 1.8, z: 0.035 }, parentPresentationId: 'spatial.room:desk', representation: 'screen',
+    },
+  };
+
+  assert.equal((await controller.handle({ id: 'bad-limit', command: 'application.search', args: { query: 'Notepad', limit: 11 } })).ok, false);
+  assert.equal((await controller.handle({ id: 'bad-restart', command: 'application.restart', args: { windowEntityId: 'pc.window:x', profileId: 'profile:x' } })).ok, false);
+  assert.equal((await controller.handle({ id: 'bad-profile', command: 'application.profile.save', args: { ...validProfile, arguments: ['ok', 3] } })).ok, false);
+  assert.equal((await controller.handle({ id: 'profile', command: 'application.profile.save', args: validProfile })).ok, true);
+  assert.equal((await controller.handle({ id: 'restart', command: 'application.restart', args: { profileId: 'profile:notes' } })).ok, true);
+  assert.equal((await controller.handle({ id: 'search', command: 'application.search', args: { query: 'Notepad', limit: 3 } })).ok, true);
+  assert.deepEqual(calls.map((call) => call[2]), [validProfile, { profileId: 'profile:notes' }, { query: 'Notepad', limit: 3 }]);
+});
+
+test('returns a deterministic safe host-failure category instead of exception text', async () => {
+  const controller = new WorkspaceCommandController(
+    { sendCommand: async () => { throw new Error('C:\\Secrets\\host-stack-details'); } }, () => null,
+  );
+
+  const result = await controller.handle({ id: 'safe-error', command: 'application.profile.list', args: {} });
+
+  assert.deepEqual(result, { id: 'safe-error', ok: false, error: 'workspace_command_failed' });
+});

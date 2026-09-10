@@ -57,11 +57,11 @@ function finite(value: unknown, label: string): number {
 function presentation(value: unknown): PresentationState {
   const source = record(value);
   if (!source) throw new Error('presentation is required.');
-  hasOnlyKeys(source, new Set(['position', 'rotation', 'size']));
   const position = record(source.position);
   const rotation = record(source.rotation);
   const size = record(source.size);
   if (!position || !rotation || !size) throw new Error('presentation is invalid.');
+  hasOnlyKeys(source, new Set(['position', 'rotation', 'size', 'parentPresentationId', 'representation']));
   hasOnlyKeys(position, new Set(['x', 'y', 'z']));
   hasOnlyKeys(rotation, new Set(['x', 'y', 'z', 'w']));
   hasOnlyKeys(size, new Set(['x', 'y', 'z']));
@@ -69,7 +69,26 @@ function presentation(value: unknown): PresentationState {
     position: { x: finite(position.x, 'presentation.position.x'), y: finite(position.y, 'presentation.position.y'), z: finite(position.z, 'presentation.position.z') },
     rotation: { x: finite(rotation.x, 'presentation.rotation.x'), y: finite(rotation.y, 'presentation.rotation.y'), z: finite(rotation.z, 'presentation.rotation.z'), w: finite(rotation.w, 'presentation.rotation.w') },
     size: { x: finite(size.x, 'presentation.size.x'), y: finite(size.y, 'presentation.size.y'), z: finite(size.z, 'presentation.size.z') },
+    ...(source.parentPresentationId === undefined ? {} : { parentPresentationId: text(source.parentPresentationId, 'presentation.parentPresentationId') }),
+    ...(source.representation === undefined ? {} : { representation: text(source.representation, 'presentation.representation') }),
   };
+}
+
+function absoluteWindowsPath(value: unknown, label: string): string {
+  const path = text(value, label);
+  if (!/^(?:[a-zA-Z]:[\\/]|\\\\)/.test(path)) {
+    throw new Error(`${label} must be an absolute Windows path.`);
+  }
+  return path;
+}
+
+function launchPolicy(value: unknown): 'reuseOrLaunch' | 'newInstance' {
+  if (value !== 'reuseOrLaunch' && value !== 'newInstance') throw new Error('launchPolicy is invalid.');
+  return value;
+}
+
+function zero(value: number): number {
+  return Object.is(value, -0) ? 0 : value;
 }
 
 export class WorkspaceCommandController {
@@ -91,6 +110,7 @@ export class WorkspaceCommandController {
     const source = record(value);
     const id = typeof source?.id === 'string' ? source.id : null;
     try {
+      if (!id || id.trim().length === 0) throw new Error('A nonblank request id is required.');
       const command = text(source?.command, 'command');
       if (!ALLOWED_WORKSPACE_COMMANDS.has(command)) {
         throw new Error(`Unsupported workspace command: ${command}.`);
@@ -107,7 +127,7 @@ export class WorkspaceCommandController {
       const payload = command === 'application.open' ? this.#openPayload(args) : this.#payload(command, args);
       return { id, ok: true, payload: await this.#client.sendCommand(command, undefined, payload) };
     } catch (error) {
-      return { id, ok: false, error: error instanceof Error ? error.message : String(error) };
+      return { id, ok: false, error: 'workspace_command_failed' };
     }
   }
 
@@ -122,10 +142,7 @@ export class WorkspaceCommandController {
       ...(applicationId === undefined ? { profileId: text(profileId, 'profileId') } : { applicationId: text(applicationId, 'applicationId') }),
     };
     if (args.launchPolicy !== undefined) {
-      if (args.launchPolicy !== 'reuseOrLaunch' && args.launchPolicy !== 'newInstance') {
-        throw new Error('launchPolicy is invalid.');
-      }
-      payload.launchPolicy = args.launchPolicy;
+      payload.launchPolicy = launchPolicy(args.launchPolicy);
     }
     if (args.replaceOccupied !== undefined) {
       if (typeof args.replaceOccupied !== 'boolean') throw new Error('replaceOccupied must be boolean.');
@@ -145,24 +162,58 @@ export class WorkspaceCommandController {
 
   #payload(command: string, args: Record<string, unknown>): Record<string, unknown> {
     const allowed: Record<string, readonly string[]> = {
-      'application.search': ['query'],
+      'application.search': ['query', 'limit'],
       'application.profile.list': [],
       'application.profile.save': ['id', 'displayName', 'applicationId', 'arguments', 'workingDirectory', 'launchPolicy', 'preferredSurfaceId', 'preferredPresentation'],
       'application.profile.delete': ['profileId'],
       'application.close': ['windowEntityId', 'approvalSource'],
-      'application.restart': ['windowEntityId', 'approvalSource'],
+      'application.restart': ['windowEntityId', 'profileId', 'approvalSource'],
       'surface.bindWindow': ['surfaceEntityId', 'windowEntityId', 'replaceOccupied'],
     };
     hasOnlyKeys(args, new Set(allowed[command] ?? []));
-    if (command === 'application.search') text(args.query, 'query');
+    if (command === 'application.search') {
+      text(args.query, 'query');
+      const limit = args.limit;
+      if (limit !== undefined && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 10)) {
+        throw new Error('limit must be an integer from 1 through 10.');
+      }
+    }
     if (command === 'application.profile.delete') text(args.profileId, 'profileId');
-    if (command === 'application.close' || command === 'application.restart') text(args.windowEntityId, 'windowEntityId');
+    if (command === 'application.close') text(args.windowEntityId, 'windowEntityId');
+    if (command === 'application.restart') {
+      if ((args.windowEntityId === undefined) === (args.profileId === undefined)) {
+        throw new Error('application.restart requires exactly one windowEntityId or profileId.');
+      }
+      if (args.windowEntityId !== undefined) text(args.windowEntityId, 'windowEntityId');
+      if (args.profileId !== undefined) text(args.profileId, 'profileId');
+    }
+    if (command === 'application.profile.save') this.#validateProfile(args);
     if (command === 'surface.bindWindow') {
       const surfaceId = text(args.surfaceEntityId, 'surfaceEntityId');
       if (!this.#knownSurfaceIds().has(surfaceId)) throw new Error(`Unknown display surface: ${surfaceId}.`);
       text(args.windowEntityId, 'windowEntityId');
     }
     return { ...args };
+  }
+
+  #validateProfile(args: Record<string, unknown>): void {
+    text(args.id, 'id');
+    text(args.displayName, 'displayName');
+    text(args.applicationId, 'applicationId');
+    if (!Array.isArray(args.arguments) || !args.arguments.every((argument) => typeof argument === 'string')) {
+      throw new Error('arguments must be a string array.');
+    }
+    if (args.workingDirectory !== undefined && args.workingDirectory !== null) {
+      absoluteWindowsPath(args.workingDirectory, 'workingDirectory');
+    }
+    launchPolicy(args.launchPolicy);
+    if (args.preferredSurfaceId !== undefined && args.preferredSurfaceId !== null) {
+      const surfaceId = text(args.preferredSurfaceId, 'preferredSurfaceId');
+      if (!this.#knownSurfaceIds().has(surfaceId)) throw new Error(`Unknown display surface: ${surfaceId}.`);
+    }
+    if (args.preferredPresentation !== undefined && args.preferredPresentation !== null) {
+      presentation(args.preferredPresentation);
+    }
   }
 
   #windowFocusTarget(args: Record<string, unknown>): string {
@@ -185,10 +236,14 @@ export class WorkspaceCommandController {
 
   #newSurfacePresentation(): PresentationState {
     const camera = this.#context.cameraPose?.() ?? { position: { x: 0, y: 1.65, z: 4 }, yaw: 0, pitch: 0 };
-    const forward = { x: -Math.sin(camera.yaw), z: -Math.cos(camera.yaw) };
+    const forward = {
+      x: -Math.sin(camera.yaw) * Math.cos(camera.pitch),
+      y: Math.sin(camera.pitch),
+      z: -Math.cos(camera.yaw) * Math.cos(camera.pitch),
+    };
     const base = {
       x: camera.position.x + forward.x * 3,
-      y: camera.position.y,
+      y: camera.position.y + forward.y * 3,
       z: camera.position.z + forward.z * 3,
     };
     const occupied = this.#context.occupiedPresentations?.() ?? [];
@@ -199,9 +254,15 @@ export class WorkspaceCommandController {
       offset += 0.25;
     }
     const halfYaw = camera.yaw / 2;
+    const halfPitch = camera.pitch / 2;
     return {
       position: { x: base.x + offset, y: base.y, z: base.z + offset },
-      rotation: { x: 0, y: Math.sin(halfYaw), z: 0, w: Math.cos(halfYaw) },
+      rotation: {
+        x: Math.cos(halfYaw) * Math.sin(halfPitch),
+        y: Math.sin(halfYaw) * Math.cos(halfPitch),
+        z: zero(-Math.sin(halfYaw) * Math.sin(halfPitch)),
+        w: Math.cos(halfYaw) * Math.cos(halfPitch),
+      },
       size: { ...CAMERA_PRESENTATION_SIZE },
     };
   }

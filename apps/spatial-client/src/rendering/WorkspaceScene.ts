@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { type PresentationState, type WorkspaceEntity } from '@workspace/world-schema';
+import { displayedWindowId, type PresentationState, type WorkspaceEntity } from '@workspace/world-schema';
 import { RendererRegistry } from './RendererRegistry.ts';
 import type { CameraPose } from '../navigation/CameraNavigator.ts';
 import type { SceneSnapshot } from '../navigation/SceneCommandController.ts';

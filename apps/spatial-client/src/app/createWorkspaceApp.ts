@@ -41,6 +41,27 @@ export class SuppressedKeyReleaseTracker {
   }
 }
 
+export class NativeCommandResultRelay<T> {
+  readonly #post: (result: T) => void;
+  #active = true;
+
+  constructor(post: (result: T) => void) {
+    this.#post = post;
+  }
+
+  forward(result: Promise<T>): void {
+    void result.then((value) => {
+      if (this.#active) this.#post(value);
+    }).catch(() => {
+      // The command controller converts expected socket errors into safe results.
+    });
+  }
+
+  destroy(): void {
+    this.#active = false;
+  }
+}
+
 type InitialSyncSocket = Pick<WorkspaceSocket, 'waitUntilOpen' | 'sendCommand'>;
 
 export async function initializeWorkspaceConnection(socket: InitialSyncSocket): Promise<void> {
@@ -119,6 +140,9 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     () => selectedEntityId,
     scene.getCameraPose(),
   );
+  const workspaceCommandResults = new NativeCommandResultRelay((result) => {
+    bridge.post('workspace.command.result', result);
+  });
   const unsubscribeNative = [
     bridge.subscribe('voice.state', (message) => {
       const state = payloadRecord(message).state;
@@ -185,9 +209,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       });
     }),
     bridge.subscribe('workspace.command', (message) => {
-      void workspaceCommands.handle(message.payload).then((result) => {
-        bridge.post('workspace.command.result', result);
-      });
+      workspaceCommandResults.forward(workspaceCommands.handle(message.payload));
     }),
   ];
 
@@ -513,6 +535,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
 
   return {
     destroy(): void {
+      workspaceCommandResults.destroy();
       unsubscribe();
       for (const unsubscribeMessage of unsubscribeNative) unsubscribeMessage();
       socket.close();
