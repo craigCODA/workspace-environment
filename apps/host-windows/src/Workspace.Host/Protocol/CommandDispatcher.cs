@@ -463,7 +463,7 @@ public sealed class CommandDispatcher(
             return Error(command.Id, "invalid_payload", "Presentation payload is invalid.");
         }
 
-        if (presentation is null || !IsValidPresentation(presentation))
+        if (presentation is null || !PresentationValidator.IsValid(presentation))
         {
             return Error(command.Id, "invalid_payload", "Presentation payload is invalid.");
         }
@@ -525,15 +525,12 @@ public sealed class CommandDispatcher(
         }
 
         var windows = await windowCatalog.ListAsync(cancellationToken);
-        var window = windows.FirstOrDefault(candidate =>
+        var visibleWindows = windows.Where(candidate =>
             candidate.IsVisible
             && !candidate.IsMinimized
             && candidate.Bounds.Width > 0
-            && candidate.Bounds.Height > 0
-            && string.Equals(
-                windowReconciler.ResolveEntityId(candidate),
-                command.Target,
-                StringComparison.Ordinal));
+            && candidate.Bounds.Height > 0);
+        var window = windowReconciler.ResolveWindow(visibleWindows, command.Target);
         if (window is null)
         {
             return Error(command.Id, "input_target_unavailable", "The Windows window is not currently available.");
@@ -575,28 +572,6 @@ public sealed class CommandDispatcher(
         };
     }
 
-    private static bool IsValidPresentation(PresentationState presentation)
-    {
-        static bool FiniteVector(Vec3 value) =>
-            double.IsFinite(value.X) && double.IsFinite(value.Y) && double.IsFinite(value.Z);
-        static bool FiniteQuaternion(Quaternion value) =>
-            double.IsFinite(value.X)
-            && double.IsFinite(value.Y)
-            && double.IsFinite(value.Z)
-            && double.IsFinite(value.W);
-
-        var rotationLengthSquared = presentation.Rotation.X * presentation.Rotation.X
-            + presentation.Rotation.Y * presentation.Rotation.Y
-            + presentation.Rotation.Z * presentation.Rotation.Z
-            + presentation.Rotation.W * presentation.Rotation.W;
-        return FiniteVector(presentation.Position)
-            && FiniteVector(presentation.Size)
-            && presentation.Size.X > 0
-            && presentation.Size.Y > 0
-            && presentation.Size.Z > 0
-            && FiniteQuaternion(presentation.Rotation)
-            && rotationLengthSquared > 1e-12;
-    }
 
     private static string? GetRequestedApplication(ProtocolEnvelope command)
     {

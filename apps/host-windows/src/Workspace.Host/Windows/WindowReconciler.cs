@@ -43,6 +43,23 @@ public sealed class WindowReconciler : IAsyncDisposable
         string.Equals(ResolveEntityId(snapshot), entityId, StringComparison.Ordinal)
         || string.Equals(ResolveExactEntityId(snapshot), entityId, StringComparison.Ordinal);
 
+    public WindowSnapshot? ResolveWindow(
+        IEnumerable<WindowSnapshot> candidates,
+        string entityId)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        ArgumentException.ThrowIfNullOrWhiteSpace(entityId);
+        var snapshots = candidates.ToArray();
+        var exact = snapshots.Where(snapshot => string.Equals(
+            ResolveExactEntityId(snapshot), entityId, StringComparison.Ordinal)).ToArray();
+        if (exact.Length == 1) return exact[0];
+        if (exact.Length > 1) return null;
+
+        var legacy = snapshots.Where(snapshot => string.Equals(
+            ResolveEntityId(snapshot), entityId, StringComparison.Ordinal)).ToArray();
+        return legacy.Length == 1 ? legacy[0] : null;
+    }
+
     public async Task<WindowRuntimeBinding> TrackAsync(
         WindowSnapshot snapshot,
         CancellationToken cancellationToken)
@@ -94,7 +111,7 @@ public sealed class WindowReconciler : IAsyncDisposable
 
         var observed = observations
             .Where(IsCapturable)
-            .GroupBy(ResolveEntityId, StringComparer.Ordinal)
+            .GroupBy(ResolveExactEntityId, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
 
         await _gate.WaitAsync(cancellationToken);
@@ -159,7 +176,7 @@ public sealed class WindowReconciler : IAsyncDisposable
 
             if (!_runtime.TryGetValue(entityId, out var runtime))
             {
-                runtime = _runtime.Values.SingleOrDefault(snapshot => MatchesEntityId(snapshot, entityId));
+                runtime = ResolveWindow(_runtime.Values, entityId);
                 if (runtime is null)
                     throw new KeyNotFoundException($"Window entity '{entityId}' has no current Windows window.");
             }

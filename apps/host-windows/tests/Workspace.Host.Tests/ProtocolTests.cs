@@ -61,6 +61,25 @@ public sealed class ProtocolTests : IDisposable
     }
 
     [Theory]
+    [InlineData("{\"applicationId\":\"pc.application:notepad\",\"targetSurfaceId\":null,\"surfaceEntityId\":\"spatial.surface:left\"}")]
+    [InlineData("{\"applicationId\":\"pc.application:notepad\",\"targetSurfaceId\":\"  \",\"surfaceEntityId\":\"spatial.surface:left\"}")]
+    [InlineData("{\"applicationId\":\"pc.application:notepad\",\"targetSurfaceId\":null}")]
+    [InlineData("{\"applicationId\":\"pc.application:notepad\",\"surfaceEntityId\":\"\"}")]
+    public void Application_open_surface_field_presence_is_strict(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        Assert.Throws<JsonException>(() => ApplicationControlRequestParser.ParseOpen(document.RootElement));
+    }
+
+    [Fact]
+    public void Application_open_rejects_an_invalid_presentation_with_the_entity_presentation_invariants()
+    {
+        Assert.Throws<JsonException>(() => ApplicationControlRequestParser.ParseOpen(JsonDocument.Parse("""
+        {"applicationId":"pc.application:notepad","presentation":{"position":{"x":0,"y":0,"z":0},"rotation":{"x":0,"y":0,"z":0,"w":0},"size":{"x":0,"y":1,"z":1}}}
+        """).RootElement));
+    }
+
+    [Theory]
     [InlineData("{}")]
     [InlineData("{\"applicationId\":\"  \"}")]
     [InlineData("{\"profileId\":\"profile:notepad\",\"applicationId\":\"pc.application:notepad\"}")]
@@ -360,6 +379,25 @@ public sealed class ProtocolTests : IDisposable
     }
 
     [Fact]
+    public async Task WindowInputResolvesTheExactRuntimeWindowWhenMultipleInstancesShareAnApplication()
+    {
+        var store = CreateStore();
+        var capture = new FrameWindowCapture();
+        var input = new RecordingInputRouter();
+        await using var reconciler = new WindowReconciler(capture);
+        var first = new WindowSnapshot((nint)424242, 4242, "First", new WindowBounds(10, 20, 800, 600), true, false, "pc.application:notepad");
+        var second = first with { Hwnd = (nint)424243, ProcessId = 4243, Title = "Second" };
+        var dispatcher = CreateSurfaceDispatcher(store, reconciler, input, [first, second]);
+
+        var outcome = await dispatcher.DispatchAsync(ProtocolEnvelope.Command(
+            "input-exact-window", "window.input", reconciler.ResolveExactEntityId(second),
+            JsonSerializer.SerializeToElement(new { kind = "text", text = "second" })), CancellationToken.None);
+
+        Assert.Equal("result", outcome.Response.Type);
+        Assert.Equal(second.Hwnd, input.LastWindow?.Hwnd);
+    }
+
+    [Fact]
     public async Task InputBlockedByWindowsIntegrityReturnsExplicitProtocolError()
     {
         var store = CreateStore();
@@ -548,13 +586,14 @@ public sealed class ProtocolTests : IDisposable
     private CommandDispatcher CreateSurfaceDispatcher(
         IWorkspaceStore store,
         WindowReconciler reconciler,
-        IInputRouter? inputRouter = null)
+        IInputRouter? inputRouter = null,
+        IReadOnlyList<WindowSnapshot>? observedWindows = null)
     {
         var catalog = new InMemoryApplicationCatalog(
         [
             new ApplicationDescriptor("pc.application:notepad", "Notepad", @"C:\Windows\notepad.exe", null),
         ]);
-        IWindowCatalog windows = new FixedWindowCatalog(
+        IWindowCatalog windows = new FixedWindowCatalog(observedWindows ??
         [
             new WindowSnapshot(
                 (nint)424242,

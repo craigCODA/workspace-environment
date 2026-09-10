@@ -94,8 +94,16 @@ public static class ApplicationControlRequestParser
         var request = Deserialize<ApplicationOpenProtocolRequest>(payload);
         if (HasText(request.ApplicationId) == HasText(request.ProfileId))
             throw new JsonException("Application open requires exactly one applicationId or profileId.");
-        if (HasText(request.TargetSurfaceId) && HasText(request.SurfaceEntityId))
+        var hasTargetSurface = payload.TryGetProperty("targetSurfaceId", out _);
+        var hasLegacySurface = payload.TryGetProperty("surfaceEntityId", out _);
+        if (hasTargetSurface && hasLegacySurface)
             throw new JsonException("Use targetSurfaceId or legacy surfaceEntityId, not both.");
+        if (hasTargetSurface && !HasText(request.TargetSurfaceId))
+            throw new JsonException("targetSurfaceId must be a nonblank string when present.");
+        if (hasLegacySurface && !HasText(request.SurfaceEntityId))
+            throw new JsonException("surfaceEntityId must be a nonblank string when present.");
+        if (request.Presentation is not null && !PresentationValidator.IsValid(request.Presentation))
+            throw new JsonException("presentation is invalid.");
         return request;
     }
 
@@ -281,6 +289,8 @@ public sealed class ApplicationControlService(
         ArgumentException.ThrowIfNullOrWhiteSpace(request.OperationId);
         try
         {
+            if (request.Presentation is not null && !PresentationValidator.IsValid(request.Presentation))
+                throw new ApplicationControlException("invalid_payload", "Presentation payload is invalid.");
             var launch = await ResolveLaunchAsync(request, cancellationToken);
             var preflight = await workspaceStore.LoadAsync(cancellationToken);
             EnsureRequestedSurfaceExists(preflight, launch.SurfaceEntityId);

@@ -140,6 +140,23 @@ public sealed class ApplicationControlTests
     }
 
     [Fact]
+    public async Task Open_rejects_invalid_explicit_presentation_before_focus_or_persistence()
+    {
+        var fixture = ApplicationControlFixture.WithVisibleWindow(
+            "app:notepad", "pc.window:notepad", "spatial.surface:right");
+        var original = fixture.Store.Document.Entities.ToArray();
+
+        var exception = await Assert.ThrowsAsync<ApplicationControlException>(() => fixture.Service.OpenAsync(
+            new ApplicationOpenRequest("op-invalid-presentation", "app:notepad", null,
+                ApplicationLaunchPolicy.ReuseOrLaunch, null, null,
+                Presentation: PresentationState.Default with { Size = new Vec3(0, 1, 1) }), CancellationToken.None));
+
+        Assert.Equal("invalid_payload", exception.Code);
+        Assert.Equal(0, fixture.Focus.FocusCount);
+        Assert.Equal(original, fixture.Store.Document.Entities);
+    }
+
+    [Fact]
     public async Task Open_rejects_an_occupied_surface_before_attempting_a_new_instance_launch()
     {
         var fixture = ApplicationControlFixture.WithOccupiedSurface();

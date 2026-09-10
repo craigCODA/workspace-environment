@@ -103,6 +103,23 @@ public sealed class WindowReconcilerTests
         Assert.Equal("stream-1", stream.StreamId);
     }
 
+    [Fact]
+    public async Task Reconcile_preserves_distinct_runtime_windows_for_each_visible_same_application_instance()
+    {
+        var capture = new RecordingWindowCapture();
+        var reconciler = new WindowReconciler(capture);
+        var first = new WindowSnapshot((nint)0x2a, 42, "First", new WindowBounds(0, 0, 800, 600), true, false, "pc.application:workspace-test");
+        var second = first with { Hwnd = (nint)0x2b, ProcessId = 43, Title = "Second" };
+        await reconciler.ReconcileAsync([first, second], CancellationToken.None);
+
+        var firstStream = await reconciler.OpenSurfaceAsync(reconciler.ResolveExactEntityId(first), CancellationToken.None);
+        var secondStream = await reconciler.OpenSurfaceAsync(reconciler.ResolveExactEntityId(second), CancellationToken.None);
+
+        Assert.NotEqual(firstStream.StreamId, secondStream.StreamId);
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => reconciler.OpenSurfaceAsync(
+            reconciler.ResolveEntityId(first), CancellationToken.None));
+    }
+
     private sealed class RecordingWindowCapture : IWindowCapture
     {
         private int _nextStreamId;

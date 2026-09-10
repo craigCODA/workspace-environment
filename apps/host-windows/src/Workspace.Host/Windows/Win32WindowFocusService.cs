@@ -24,12 +24,12 @@ public sealed class Win32WindowFocusService : IWindowFocusService
         ArgumentException.ThrowIfNullOrWhiteSpace(entityId);
 
         var windows = await _windowCatalog.ListAsync(cancellationToken);
-        var window = windows.FirstOrDefault(candidate =>
+        var visibleWindows = windows.Where(candidate =>
             candidate.IsVisible
             && !candidate.IsMinimized
             && candidate.Bounds.Width > 0
-            && candidate.Bounds.Height > 0
-            && _windowReconciler.MatchesEntityId(candidate, entityId));
+            && candidate.Bounds.Height > 0);
+        var window = _windowReconciler.ResolveWindow(visibleWindows, entityId);
         if (window is null)
         {
             throw new KeyNotFoundException(
