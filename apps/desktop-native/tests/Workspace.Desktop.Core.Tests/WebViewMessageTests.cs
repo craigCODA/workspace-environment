@@ -62,4 +62,36 @@ public sealed class WebViewMessageTests
             out _,
             out var error), error);
     }
+
+    [Fact]
+    public void Workspace_results_require_one_matching_pending_native_request()
+    {
+        var validator = new RendererMessageValidator();
+        validator.ExpectWorkspaceResult("workspace-7");
+
+        Assert.False(validator.TryParse(
+            """{"version":1,"type":"workspace.command.result","payload":{"id":"workspace-8","ok":true}}""",
+            out _, out _));
+        Assert.True(validator.TryParse(
+            """{"version":1,"type":"workspace.command.result","payload":{"id":"workspace-7","ok":true}}""",
+            out _, out var error), error);
+        Assert.False(validator.TryParse(
+            """{"version":1,"type":"workspace.command.result","payload":{"id":"workspace-7","ok":true}}""",
+            out _, out _));
+    }
+
+    [Fact]
+    public void Oversized_workspace_result_is_rejected_before_correlation()
+    {
+        var validator = new RendererMessageValidator();
+        validator.ExpectWorkspaceResult("workspace-9");
+        var oversized = "{\"version\":1,\"type\":\"workspace.command.result\",\"payload\":{\"id\":\"workspace-9\",\"text\":\""
+            + new string('x', RendererMessageValidator.MaximumMessageBytes)
+            + "\"}}";
+
+        Assert.False(validator.TryParse(oversized, out _, out _));
+        Assert.True(validator.TryParse(
+            """{"version":1,"type":"workspace.command.result","payload":{"id":"workspace-9","ok":true}}""",
+            out _, out var error), error);
+    }
 }

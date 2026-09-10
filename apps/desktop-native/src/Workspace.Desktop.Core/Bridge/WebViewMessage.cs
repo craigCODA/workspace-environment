@@ -13,6 +13,7 @@ public sealed class RendererMessageValidator
     {
         "renderer.ready",
         "scene.command.result",
+        "workspace.command.result",
         "preference.change.request",
         "voice.control",
         "agent.instruction",
@@ -27,6 +28,7 @@ public sealed class RendererMessageValidator
     };
 
     private readonly HashSet<string> _pendingSceneResults = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _pendingWorkspaceResults = new(StringComparer.Ordinal);
     private readonly object _sync = new();
 
     public void ExpectSceneResult(string requestId)
@@ -35,6 +37,15 @@ public sealed class RendererMessageValidator
         lock (_sync)
         {
             _pendingSceneResults.Add(requestId);
+        }
+    }
+
+    public void ExpectWorkspaceResult(string requestId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
+        lock (_sync)
+        {
+            _pendingWorkspaceResults.Add(requestId);
         }
     }
 
@@ -94,6 +105,10 @@ public sealed class RendererMessageValidator
             {
                 return false;
             }
+            if (type == "workspace.command.result" && !ConsumeExpectedWorkspaceResult(payload, out error))
+            {
+                return false;
+            }
 
             message = new WebViewMessage(version, type, payload.Clone());
             error = string.Empty;
@@ -122,6 +137,30 @@ public sealed class RendererMessageValidator
             if (!_pendingSceneResults.Remove(id))
             {
                 error = "Scene result does not match a pending native request.";
+                return false;
+            }
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private bool ConsumeExpectedWorkspaceResult(JsonElement payload, out string error)
+    {
+        if (payload.ValueKind != JsonValueKind.Object
+            || !payload.TryGetProperty("id", out var idElement)
+            || idElement.ValueKind != JsonValueKind.String
+            || idElement.GetString() is not { Length: > 0 } id)
+        {
+            error = "Workspace result requires a string request id.";
+            return false;
+        }
+
+        lock (_sync)
+        {
+            if (!_pendingWorkspaceResults.Remove(id))
+            {
+                error = "Workspace result does not match a pending native request.";
                 return false;
             }
         }
