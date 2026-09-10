@@ -168,12 +168,6 @@ public sealed class WindowReconciler : IAsyncDisposable
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            if (_tracked.TryGetValue(entityId, out var existing)
-                && _capture.ActiveStreamIds.Contains(existing.Stream.StreamId, StringComparer.Ordinal))
-            {
-                return existing.Stream;
-            }
-
             if (!_runtime.TryGetValue(entityId, out var runtime))
             {
                 runtime = ResolveWindow(_runtime.Values, entityId);
@@ -181,8 +175,20 @@ public sealed class WindowReconciler : IAsyncDisposable
                     throw new KeyNotFoundException($"Window entity '{entityId}' has no current Windows window.");
             }
 
+            var runtimeEntityId = ResolveExactEntityId(runtime);
+            var existing = _tracked.Values.FirstOrDefault(binding =>
+                string.Equals(
+                    ResolveExactEntityId(binding.Runtime),
+                    runtimeEntityId,
+                    StringComparison.Ordinal)
+                && _capture.ActiveStreamIds.Contains(binding.Stream.StreamId, StringComparer.Ordinal));
+            if (existing is not null)
+            {
+                return existing.Stream;
+            }
+
             var stream = await _capture.StartAsync(runtime.Hwnd, cancellationToken);
-            _tracked[entityId] = new WindowRuntimeBinding(entityId, runtime, stream);
+            _tracked[runtimeEntityId] = new WindowRuntimeBinding(runtimeEntityId, runtime, stream);
             return stream;
         }
         finally

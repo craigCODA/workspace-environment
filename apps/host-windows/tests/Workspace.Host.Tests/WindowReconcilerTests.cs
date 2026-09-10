@@ -120,6 +120,41 @@ public sealed class WindowReconcilerTests
             reconciler.ResolveEntityId(first), CancellationToken.None));
     }
 
+    [Fact]
+    public async Task Legacy_surface_capture_is_stopped_when_its_resolved_runtime_disappears()
+    {
+        var capture = new RecordingWindowCapture();
+        var reconciler = new WindowReconciler(capture);
+        var window = new WindowSnapshot((nint)0x2a, 42, "Workspace Test Window",
+            new WindowBounds(0, 0, 800, 600), true, false, "pc.application:workspace-test");
+        await reconciler.ReconcileAsync([window], CancellationToken.None);
+        var stream = await reconciler.OpenSurfaceAsync(
+            reconciler.ResolveEntityId(window), CancellationToken.None);
+
+        await reconciler.ReconcileAsync([], CancellationToken.None);
+
+        Assert.Empty(reconciler.ActiveCaptureStreams);
+        Assert.Equal(stream.StreamId, Assert.Single(capture.StoppedStreamIds));
+    }
+
+    [Fact]
+    public async Task Legacy_and_exact_ids_reuse_the_same_capture_stream()
+    {
+        var capture = new RecordingWindowCapture();
+        var reconciler = new WindowReconciler(capture);
+        var window = new WindowSnapshot((nint)0x2a, 42, "Workspace Test Window",
+            new WindowBounds(0, 0, 800, 600), true, false, "pc.application:workspace-test");
+        await reconciler.ReconcileAsync([window], CancellationToken.None);
+
+        var legacyStream = await reconciler.OpenSurfaceAsync(
+            reconciler.ResolveEntityId(window), CancellationToken.None);
+        var exactStream = await reconciler.OpenSurfaceAsync(
+            reconciler.ResolveExactEntityId(window), CancellationToken.None);
+
+        Assert.Equal(legacyStream, exactStream);
+        Assert.Single(reconciler.ActiveCaptureStreams);
+    }
+
     private sealed class RecordingWindowCapture : IWindowCapture
     {
         private int _nextStreamId;
