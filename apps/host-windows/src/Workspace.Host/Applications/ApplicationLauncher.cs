@@ -44,13 +44,15 @@ public sealed class ApplicationLauncher(IProcessLauncher processLauncher)
         var argument = new StringBuilder();
         var inQuotes = false;
         var backslashCount = 0;
+        var hasArgument = false;
 
         void AddArgument()
         {
-            if (argument.Length > 0)
+            if (hasArgument)
             {
                 arguments.Add(argument.ToString());
                 argument.Clear();
+                hasArgument = false;
             }
         }
 
@@ -65,6 +67,7 @@ public sealed class ApplicationLauncher(IProcessLauncher processLauncher)
             if (character == '"')
             {
                 argument.Append('\\', backslashCount / 2);
+                hasArgument = true;
                 if (backslashCount % 2 == 1)
                 {
                     argument.Append('"');
@@ -79,6 +82,7 @@ public sealed class ApplicationLauncher(IProcessLauncher processLauncher)
             }
 
             argument.Append('\\', backslashCount);
+            hasArgument |= backslashCount > 0;
             backslashCount = 0;
             if (char.IsWhiteSpace(character) && !inQuotes)
             {
@@ -87,10 +91,12 @@ public sealed class ApplicationLauncher(IProcessLauncher processLauncher)
             else
             {
                 argument.Append(character);
+                hasArgument = true;
             }
         }
 
         argument.Append('\\', backslashCount);
+        hasArgument |= backslashCount > 0;
         AddArgument();
         return arguments;
     }

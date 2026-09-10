@@ -130,6 +130,21 @@ public sealed class ApplicationLifecycleTests
     }
 
     [Fact]
+    public async Task Launcher_preserves_an_explicitly_empty_legacy_quoted_argument()
+    {
+        var process = new RecordingProcessLauncher(8100);
+        var application = new ApplicationDescriptor(
+            "app:terminal",
+            "Terminal",
+            @"C:\wt.exe",
+            "--title \"\"");
+
+        await new ApplicationLauncher(process).LaunchAsync(application, CancellationToken.None);
+
+        Assert.Equal(["--title", ""], process.Request!.Arguments);
+    }
+
+    [Fact]
     public async Task Launcher_validates_a_legacy_descriptor_before_reading_its_arguments()
     {
         var launcher = new ApplicationLauncher(new RecordingProcessLauncher(8100));
