@@ -387,6 +387,9 @@ button {
     justify-content: flex-end;
   }
 
+}
+
+@media (max-width: 640px) {
   .coda-chat {
     left: 1rem;
     right: 1rem;
