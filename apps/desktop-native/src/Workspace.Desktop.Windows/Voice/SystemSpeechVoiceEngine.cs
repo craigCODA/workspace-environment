@@ -47,7 +47,6 @@ public sealed class SystemSpeechVoiceEngine :
         }
 
         _wakeRecognizer.SpeechRecognized += OnWakeRecognized;
-        _dictationRecognizer.SpeechDetected += OnSpeechDetected;
         _dictationRecognizer.SpeechRecognized += OnDictationRecognized;
         _synthesizer.SpeakProgress += OnSpeakProgress;
         _synthesizer.SpeakCompleted += OnSpeakCompleted;
@@ -148,6 +147,10 @@ public sealed class SystemSpeechVoiceEngine :
             ?? throw new InvalidOperationException("No installed Windows speech recognizer was found.");
         var engine = new SpeechRecognitionEngine(recognizer);
         engine.SetInputToDefaultAudioDevice();
+        engine.InitialSilenceTimeout = TimeSpan.FromSeconds(6);
+        engine.BabbleTimeout = TimeSpan.FromSeconds(2);
+        engine.EndSilenceTimeout = TimeSpan.FromMilliseconds(700);
+        engine.EndSilenceTimeoutAmbiguous = TimeSpan.FromMilliseconds(1_100);
         return engine;
     }
 
@@ -171,7 +174,7 @@ public sealed class SystemSpeechVoiceEngine :
 
     private async void OnWakeRecognized(object? sender, RecognitionEventArgs args)
     {
-        if (args.Result.Confidence < 0.65f || Detected is null)
+        if (!SpeechConfidencePolicy.AcceptWakePhrase(args.Result.Confidence) || Detected is null)
         {
             return;
         }
@@ -179,19 +182,16 @@ public sealed class SystemSpeechVoiceEngine :
         await InvokeAsync(Detected, new WakeWordDetectedEventArgs(args.Result.Text)).ConfigureAwait(false);
     }
 
-    private async void OnSpeechDetected(object? sender, SpeechDetectedEventArgs args)
+    private async void OnDictationRecognized(object? sender, RecognitionEventArgs args)
     {
+        if (Recognized is null || !SpeechConfidencePolicy.AcceptDictation(args.Result.Confidence))
+        {
+            return;
+        }
+
         if (SpeechStarted is not null)
         {
             await InvokeAsync(SpeechStarted, EventArgs.Empty).ConfigureAwait(false);
-        }
-    }
-
-    private async void OnDictationRecognized(object? sender, RecognitionEventArgs args)
-    {
-        if (Recognized is null)
-        {
-            return;
         }
 
         var result = new Workspace.Desktop.Core.Voice.SpeechRecognizedEventArgs(

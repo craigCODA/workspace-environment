@@ -99,6 +99,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   const coda = new CodaPresence(root, {
     onPreferenceChange: (change) => bridge.post('preference.change.request', change),
     onVoiceControl: (action) => bridge.post('voice.control', { action }),
+    onAgentInstruction: (text) => bridge.post('agent.instruction', { text }),
   });
   let selectedEntityId: string | null = null;
   const navigator = new CameraNavigator(scene);
@@ -116,12 +117,23 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       }
     }),
     bridge.subscribe('voice.caption', (message) => {
-      const text = payloadRecord(message).text;
-      if (typeof text === 'string') coda.showCaption(text);
+      const payload = payloadRecord(message);
+      const text = payload.text;
+      if (typeof text === 'string') {
+        coda.showCaption(text);
+        coda.addChatMessage(
+          'assistant',
+          text,
+          typeof payload.utteranceId === 'string' ? payload.utteranceId : undefined,
+        );
+      }
     }),
     bridge.subscribe('voice.transcript', (message) => {
       const text = payloadRecord(message).text;
-      if (typeof text === 'string') coda.setTranscript(text);
+      if (typeof text === 'string') {
+        coda.setTranscript(text);
+        if (payloadRecord(message).final === true) coda.addChatMessage('user', text);
+      }
     }),
     bridge.subscribe('agent.event', (message) => {
       const payload = payloadRecord(message);
@@ -216,8 +228,12 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     coda.setState('needs-attention');
   };
 
+  const isCodaInteractiveTarget = (target: EventTarget | null): boolean =>
+    target instanceof Element
+      && target.closest('.coda-chat, .coda-controls, .coda-terminal, .coda-transcript') !== null;
+
   const onPointerDown = (event: PointerEvent): void => {
-    if (event.target instanceof Element && event.target.closest('button')) return;
+    if (isCodaInteractiveTarget(event.target)) return;
     sceneCommands.cancel('manual-pointer');
     const button: PointerButton | null = event.button === 0
       ? 'primary'
@@ -350,6 +366,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   };
 
   const onWheel = (event: WheelEvent): void => {
+    if (isCodaInteractiveTarget(event.target)) return;
     const hit = scene.hitTestApplicationSurface(event.clientX, event.clientY);
     if (!hit) return;
     sceneCommands.cancel('manual-wheel');
@@ -361,11 +378,12 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   };
 
   const onContextMenu = (event: MouseEvent): void => {
+    if (isCodaInteractiveTarget(event.target)) return;
     if (scene.hitTestApplicationSurface(event.clientX, event.clientY)) event.preventDefault();
   };
 
   const onKeyDown = (event: KeyboardEvent): void => {
-    if (event.target instanceof HTMLButtonElement) return;
+    if (isCodaInteractiveTarget(event.target)) return;
     if (event.key === 'Escape') {
       sceneCommands.cancel('manual-escape');
       selectedSurface = null;
@@ -433,6 +451,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   };
 
   const onKeyUp = (event: KeyboardEvent): void => {
+    if (isCodaInteractiveTarget(event.target)) return;
     if (suppressedKeyReleases.consume(event.key)) {
       event.preventDefault();
       return;
@@ -441,7 +460,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       event.preventDefault();
       return;
     }
-    if (!selectedSurface || event.target instanceof HTMLButtonElement) return;
+    if (!selectedSurface) return;
     if (event.key.length === 1 && !event.altKey && !event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
     void selectedSurface.key('up', event.key).catch(reportInputError);

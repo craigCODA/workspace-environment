@@ -29,6 +29,7 @@ export type CodaPresenceModel = Readonly<{
   captionsEnabled: boolean;
   transcriptVisible: boolean;
   terminalVisible: boolean;
+  chatVisible: boolean;
   proactiveMode: ProactiveMode;
   terminalEvents: readonly string[];
 }>;
@@ -46,7 +47,8 @@ type CodaPresenceAction =
       proactiveMode?: ProactiveMode;
     }>
   | Readonly<{ type: 'terminal-events'; events: readonly string[] }>
-  | Readonly<{ type: 'terminal-visibility'; visible: boolean }>;
+  | Readonly<{ type: 'terminal-visibility'; visible: boolean }>
+  | Readonly<{ type: 'chat-visibility'; visible: boolean }>;
 
 const STATE_LABELS: Record<CodaState, string> = {
   waiting: 'Waiting for Hey Coda',
@@ -66,6 +68,7 @@ const INITIAL_MODEL: CodaPresenceModel = {
   captionsEnabled: true,
   transcriptVisible: false,
   terminalVisible: false,
+  chatVisible: true,
   proactiveMode: 'CriticalOnly',
   terminalEvents: [],
 };
@@ -91,12 +94,15 @@ export function reduceCodaPresence(
       return { ...model, terminalEvents: action.events.slice(-24) };
     case 'terminal-visibility':
       return { ...model, terminalVisible: action.visible };
+    case 'chat-visibility':
+      return { ...model, chatVisible: action.visible };
   }
 }
 
 export type CodaPresenceOptions = Readonly<{
   onPreferenceChange?(change: Record<string, boolean | string>): void;
   onVoiceControl?(action: 'listen' | 'pause' | 'resume' | 'stop'): void;
+  onAgentInstruction?(text: string): void;
 }>;
 
 export class CodaPresence {
@@ -106,11 +112,16 @@ export class CodaPresence {
   readonly #transcript: HTMLElement;
   readonly #terminal: HTMLElement;
   readonly #terminalList: HTMLUListElement;
+  readonly #chat: HTMLElement;
+  readonly #chatMessages: HTMLDivElement;
+  readonly #chatInput: HTMLInputElement;
+  readonly #chatMessagesById = new Map<string, HTMLElement>();
   readonly #talkButton: HTMLButtonElement;
   readonly #microphoneButton: HTMLButtonElement;
   readonly #captionsButton: HTMLButtonElement;
   readonly #transcriptButton: HTMLButtonElement;
   readonly #terminalButton: HTMLButtonElement;
+  readonly #chatButton: HTMLButtonElement;
   readonly #alertsButton: HTMLButtonElement;
   readonly #options: CodaPresenceOptions;
   #model = INITIAL_MODEL;
@@ -150,6 +161,35 @@ export class CodaPresence {
     this.#terminalList = document.createElement('ul');
     this.#terminal.append(terminalHeading, this.#terminalList);
 
+    this.#chat = document.createElement('aside');
+    this.#chat.className = 'coda-chat';
+    this.#chat.setAttribute('aria-label', 'Chat with Coda');
+    const chatHeading = document.createElement('p');
+    chatHeading.className = 'coda-chat-heading';
+    chatHeading.textContent = 'Coda';
+    this.#chatMessages = document.createElement('div');
+    this.#chatMessages.className = 'coda-chat-messages';
+    this.#chatMessages.setAttribute('aria-live', 'polite');
+    const chatForm = document.createElement('form');
+    chatForm.className = 'coda-chat-form';
+    this.#chatInput = document.createElement('input');
+    this.#chatInput.type = 'text';
+    this.#chatInput.placeholder = 'Message Coda…';
+    this.#chatInput.setAttribute('aria-label', 'Message Coda');
+    const send = document.createElement('button');
+    send.type = 'submit';
+    send.textContent = 'Send';
+    chatForm.append(this.#chatInput, send);
+    chatForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const text = this.#chatInput.value.trim();
+      if (!text) return;
+      this.addChatMessage('user', text);
+      this.#chatInput.value = '';
+      this.#options.onAgentInstruction?.(text);
+    });
+    this.#chat.append(chatHeading, this.#chatMessages, chatForm);
+
     const controls = document.createElement('nav');
     controls.className = 'coda-controls';
     controls.setAttribute('aria-label', 'Coda controls');
@@ -176,6 +216,9 @@ export class CodaPresence {
     this.#terminalButton = this.#controlButton(controls, 'Activity', () => {
       this.setTerminalVisible(!this.#model.terminalVisible);
     });
+    this.#chatButton = this.#controlButton(controls, 'Chat', () => {
+      this.setChatVisible(!this.#model.chatVisible);
+    });
     this.#alertsButton = this.#controlButton(controls, 'Alerts', () => {
       const modes: ProactiveMode[] = ['CriticalOnly', 'IncludeCompletion', 'Quiet'];
       const index = modes.indexOf(this.#model.proactiveMode);
@@ -191,6 +234,7 @@ export class CodaPresence {
       this.#caption,
       this.#transcript,
       this.#terminal,
+      this.#chat,
     );
     root.append(this.#element);
     this.#render();
@@ -228,6 +272,10 @@ export class CodaPresence {
         type: 'terminal-visibility',
         visible: true,
       });
+      this.#model = reduceCodaPresence(this.#model, {
+        type: 'chat-visibility',
+        visible: false,
+      });
     }
     this.#terminalList.replaceChildren();
     for (const event of this.#model.terminalEvents) {
@@ -240,7 +288,43 @@ export class CodaPresence {
 
   setTerminalVisible(visible: boolean): void {
     this.#model = reduceCodaPresence(this.#model, { type: 'terminal-visibility', visible });
+    if (visible) {
+      this.#model = reduceCodaPresence(this.#model, {
+        type: 'chat-visibility',
+        visible: false,
+      });
+    }
     this.#render();
+  }
+
+  setChatVisible(visible: boolean): void {
+    this.#model = reduceCodaPresence(this.#model, { type: 'chat-visibility', visible });
+    if (visible) {
+      this.#model = reduceCodaPresence(this.#model, {
+        type: 'terminal-visibility',
+        visible: false,
+      });
+    }
+    this.#render();
+    if (visible) this.#chatInput.focus();
+  }
+
+  addChatMessage(role: 'user' | 'assistant', text: string, messageId?: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    let message = messageId ? this.#chatMessagesById.get(messageId) : undefined;
+    if (!message) {
+      message = document.createElement('p');
+      message.className = `coda-chat-message coda-chat-message-${role}`;
+      message.dataset.role = role;
+      if (messageId) {
+        message.dataset.messageId = messageId;
+        this.#chatMessagesById.set(messageId, message);
+      }
+      this.#chatMessages.append(message);
+    }
+    message.textContent = trimmed;
+    this.#chatMessages.scrollTop = this.#chatMessages.scrollHeight;
   }
 
   destroy(): void {
@@ -265,6 +349,7 @@ export class CodaPresence {
     this.#captionsButton.textContent = this.#model.captionsEnabled ? 'CC on' : 'CC off';
     this.#transcriptButton.setAttribute('aria-pressed', String(this.#model.transcriptVisible));
     this.#terminalButton.setAttribute('aria-pressed', String(this.#model.terminalVisible));
+    this.#chatButton.setAttribute('aria-pressed', String(this.#model.chatVisible));
     this.#alertsButton.setAttribute(
       'aria-label',
       `Proactive alerts: ${this.#model.proactiveMode}`,
@@ -275,6 +360,7 @@ export class CodaPresence {
         ? 'Alerts: +done'
         : 'Alerts: quiet';
     this.#terminal.hidden = !this.#model.terminalVisible || this.#model.terminalEvents.length === 0;
+    this.#chat.hidden = !this.#model.chatVisible;
     this.#transcript.hidden = !this.#model.transcriptVisible
       || (this.#transcript.textContent?.trim().length ?? 0) === 0;
   }

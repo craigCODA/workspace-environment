@@ -197,7 +197,8 @@ button {
 }
 
 .coda-transcript,
-.coda-terminal {
+.coda-terminal,
+.coda-chat {
   position: absolute;
   right: clamp(1.2rem, 3vw, 2.8rem);
   width: min(28rem, calc(100vw - 2.4rem));
@@ -223,6 +224,86 @@ button {
   max-height: min(42vh, 22rem);
   overflow: auto;
   padding: 0.8rem 0.95rem;
+}
+
+.coda-chat {
+  top: clamp(4.2rem, 8vw, 5.8rem);
+  bottom: 7.5rem;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: 31rem;
+  overflow: hidden;
+}
+
+.coda-chat-heading {
+  margin: 0;
+  padding: 0.72rem 0.9rem 0.58rem;
+  border-bottom: 1px solid rgb(240 238 230 / 8%);
+  color: #f0eee6;
+  font-family: "Bahnschrift", "Arial Narrow", sans-serif;
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.coda-chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 7rem;
+  overflow: auto;
+  padding: 0.72rem 0.78rem;
+}
+
+.coda-chat-message {
+  max-width: 88%;
+  margin: 0;
+  padding: 0.55rem 0.68rem;
+  border-radius: 0.65rem;
+  color: rgb(240 238 230 / 90%);
+  background: rgb(240 238 230 / 8%);
+  font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  font-size: 0.8rem;
+  line-height: 1.38;
+  user-select: text;
+}
+
+.coda-chat-message-user {
+  align-self: flex-end;
+  color: #effff9;
+  background: rgb(70 115 108 / 62%);
+}
+
+.coda-chat-form {
+  display: flex;
+  gap: 0.45rem;
+  padding: 0.65rem;
+  border-top: 1px solid rgb(240 238 230 / 8%);
+}
+
+.coda-chat-form input {
+  min-width: 0;
+  flex: 1;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgb(240 238 230 / 14%);
+  border-radius: 0.5rem;
+  outline: none;
+  color: #fffdf5;
+  background: rgb(5 12 14 / 58%);
+  font: inherit;
+}
+
+.coda-chat-form input:focus {
+  border-color: rgb(143 198 188 / 70%);
+}
+
+.coda-chat-form button {
+  padding: 0.5rem 0.7rem;
+  border: 1px solid rgb(143 198 188 / 34%);
+  border-radius: 0.5rem;
+  color: #e6fff8;
+  background: rgb(70 115 108 / 58%);
+  cursor: pointer;
 }
 
 .coda-terminal-heading {
@@ -304,6 +385,12 @@ button {
     right: 1rem;
     flex-wrap: wrap;
     justify-content: flex-end;
+  }
+
+  .coda-chat {
+    left: 1rem;
+    right: 1rem;
+    width: auto;
   }
 }
 

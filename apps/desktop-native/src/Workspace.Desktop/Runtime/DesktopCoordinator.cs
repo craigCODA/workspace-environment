@@ -124,7 +124,20 @@ public sealed class DesktopCoordinator : IAsyncDisposable
         try
         {
             var engine = new SystemSpeechVoiceEngine();
-            _voice = new VoiceConversationController(engine, engine, engine);
+            ISpeechSynthesizer speechOutput;
+            try
+            {
+                var modernOutput = new WindowsMediaSpeechSynthesizer();
+                speechOutput = modernOutput;
+                AddTerminalEvent($"Voice output: {modernOutput.VoiceDisplayName} (Windows OneCore)");
+            }
+            catch (Exception)
+            {
+                speechOutput = engine;
+                AddTerminalEvent("Voice output: legacy Windows SAPI fallback");
+            }
+
+            _voice = new VoiceConversationController(engine, engine, speechOutput);
             _voice.EventRaised += OnVoiceEvent;
             _voiceStartup = RunVoiceStartupAsync(_voice, _profile, _lifetime.Token);
         }
@@ -231,6 +244,7 @@ public sealed class DesktopCoordinator : IAsyncDisposable
             return;
         }
 
+        PostOnUi("voice.state", new { state = "thinking" });
         _assistantResponse.Clear();
         try
         {
@@ -318,6 +332,7 @@ public sealed class DesktopCoordinator : IAsyncDisposable
                         _assistantResponse.Append(delta.Text);
                         break;
                     case AgentCommandStarted command:
+                        PostOnUi("voice.state", new { state = "working" });
                         AddTerminalEvent($"> {command.CommandSummary}");
                         break;
                     case AgentTerminalDelta output:
@@ -791,7 +806,8 @@ public sealed class DesktopCoordinator : IAsyncDisposable
             case "agent.instruction":
                 if (ReadString(message.Payload, "text") is { Length: > 0 } instruction)
                 {
-                    _ = HandleVoiceCommandAsync(instruction);
+                    _ = _voice?.SubmitTextAsync(instruction, _lifetime.Token)
+                        ?? HandleVoiceCommandAsync(instruction);
                 }
                 break;
             case "agent.approval.response":

@@ -9,6 +9,7 @@ const initial: CodaPresenceModel = {
   captionsEnabled: true,
   transcriptVisible: false,
   terminalVisible: false,
+  chatVisible: true,
   proactiveMode: 'CriticalOnly',
   terminalEvents: [],
 };
@@ -53,4 +54,11 @@ test('terminal visibility and microphone state remain directly togglable', () =>
 
   assert.equal(microphone.terminalVisible, true);
   assert.equal(microphone.microphoneEnabled, false);
+});
+
+test('chat can be collapsed without changing voice preferences', () => {
+  const next = reduceCodaPresence(initial, { type: 'chat-visibility', visible: false });
+
+  assert.equal(next.chatVisible, false);
+  assert.equal(next.microphoneEnabled, true);
 });

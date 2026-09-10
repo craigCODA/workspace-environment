@@ -179,6 +179,14 @@ public sealed class VoiceConversationController : IAsyncDisposable
         }
     }
 
+    public Task SubmitTextAsync(
+        string text,
+        CancellationToken cancellationToken = default) =>
+        ProcessInputAsync(
+            new SpeechRecognizedEventArgs(text, isFinal: true, confidence: 1f),
+            isTyped: true,
+            cancellationToken);
+
     public async Task PauseAsync(CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -338,15 +346,22 @@ public sealed class VoiceConversationController : IAsyncDisposable
         }
     }
 
-    private async Task OnRecognizedAsync(object? sender, SpeechRecognizedEventArgs args)
+    private Task OnRecognizedAsync(object? sender, SpeechRecognizedEventArgs args) =>
+        ProcessInputAsync(args, isTyped: false, CancellationToken.None);
+
+    private async Task ProcessInputAsync(
+        SpeechRecognizedEventArgs args,
+        bool isTyped,
+        CancellationToken cancellationToken)
     {
         string? capturedName = null;
         string? nameToConfirm = null;
         bool retryName = false;
-        await _gate.WaitAsync().ConfigureAwait(false);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!_recognizerRunning || State is not (VoiceState.Listening or VoiceState.Speaking))
+            if (!_running || (!isTyped
+                && (!_recognizerRunning || State is not (VoiceState.Listening or VoiceState.Speaking))))
             {
                 return;
             }
@@ -357,8 +372,11 @@ public sealed class VoiceConversationController : IAsyncDisposable
                 return;
             }
 
-            Raise(new VoiceTranscript(text, args.IsFinal, args.Confidence, _timeProvider.GetUtcNow()));
-            ScheduleSilenceTimeout();
+            if (!isTyped)
+            {
+                Raise(new VoiceTranscript(text, args.IsFinal, args.Confidence, _timeProvider.GetUtcNow()));
+                ScheduleSilenceTimeout();
+            }
             if (!args.IsFinal)
             {
                 return;
@@ -457,7 +475,7 @@ public sealed class VoiceConversationController : IAsyncDisposable
 
     private void OnSpeechProgress(object? sender, SpeechProgressEventArgs args)
     {
-        if (!_profile.CaptionsEnabled || args.UtteranceId != _currentUtteranceId)
+        if (args.UtteranceId != _currentUtteranceId)
         {
             return;
         }

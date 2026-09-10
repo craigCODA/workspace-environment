@@ -45,6 +45,19 @@ public sealed class VoiceConversationControllerTests
     }
 
     [Fact]
+    public async Task Typed_chat_uses_the_same_command_path_without_duplicating_a_voice_transcript()
+    {
+        var fixture = new VoiceFixture();
+        await fixture.Controller.StartAsync(Profile(onboardingCompleted: true));
+
+        await fixture.Controller.SubmitTextAsync("build the workspace");
+
+        Assert.Contains(fixture.Events, item => item is VoiceCommandRecognized command
+            && command.Text == "build the workspace");
+        Assert.DoesNotContain(fixture.Events, item => item is VoiceTranscript);
+    }
+
+    [Fact]
     public async Task Active_listening_returns_to_dormant_after_silence()
     {
         var fixture = new VoiceFixture(TimeSpan.FromMilliseconds(15));
@@ -76,12 +89,12 @@ public sealed class VoiceConversationControllerTests
     }
 
     [Fact]
-    public async Task Microphone_and_caption_preferences_are_independent()
+    public async Task Caption_events_remain_available_for_chat_when_bottom_captions_are_hidden()
     {
         var fixture = new VoiceFixture();
         await fixture.Controller.StartAsync(Profile(onboardingCompleted: true, captionsEnabled: false));
 
-        Assert.DoesNotContain(fixture.Events, item => item is VoiceCaption);
+        Assert.Contains(fixture.Events, item => item is VoiceCaption);
         await fixture.Controller.SetMicrophoneEnabledAsync(false);
         Assert.Equal(VoiceState.MicrophoneOff, fixture.Controller.State);
         Assert.False(fixture.Wake.IsRunning);
@@ -101,6 +114,21 @@ public sealed class VoiceConversationControllerTests
         Assert.DoesNotContain(fixture.Events, item => item is PreferredNameCaptured);
         Assert.Equal("I heard Morgan. Is that right?", fixture.Synthesizer.Spoken[7]);
         await fixture.Recognizer.EmitRecognizedAsync("yes");
+        Assert.Contains(fixture.Events, item => item is PreferredNameCaptured captured
+            && captured.Name == "Morgan");
+    }
+
+    [Fact]
+    public async Task Typed_chat_can_finish_name_setup_when_the_microphone_is_off()
+    {
+        var fixture = new VoiceFixture();
+        await fixture.Controller.StartAsync(Profile(
+            onboardingCompleted: false,
+            microphoneEnabled: false));
+
+        await fixture.Controller.SubmitTextAsync("Morgan");
+        await fixture.Controller.SubmitTextAsync("yes");
+
         Assert.Contains(fixture.Events, item => item is PreferredNameCaptured captured
             && captured.Name == "Morgan");
     }
@@ -149,11 +177,13 @@ public sealed class VoiceConversationControllerTests
     private static VoiceProfile Profile(
         bool onboardingCompleted,
         string preferredName = "",
-        bool captionsEnabled = true) => VoiceProfile.Default with
+        bool captionsEnabled = true,
+        bool microphoneEnabled = true) => VoiceProfile.Default with
         {
             OnboardingCompleted = onboardingCompleted,
             PreferredName = preferredName,
             CaptionsEnabled = captionsEnabled,
+            MicrophoneEnabled = microphoneEnabled,
         };
 
     private sealed class VoiceFixture

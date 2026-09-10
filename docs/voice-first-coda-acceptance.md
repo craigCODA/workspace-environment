@@ -2,7 +2,7 @@
 
 ## Acceptance statement
 
-The native preview replaces the static onboarding panel with a local voice-first Coda presence. First launch speaks the original welcome in order with bottom captions and asks for a preferred name. Returning launches greet that saved name. After onboarding, local Windows speech remains dormant except for the exact `Hey Coda` wake phrase; important proactive speech follows the selected alert policy.
+The native preview replaces the static onboarding panel with a local voice-first Coda presence. First launch speaks the original welcome in order with bottom captions and asks for a preferred name. Returning launches greet that saved name. After onboarding, local Windows speech remains dormant except for the exact `Hey Coda` wake phrase; important proactive speech follows the selected alert policy. A collapsible chat panel mirrors both sides of the live conversation and sends typed messages through the same Coda command, agent, approval, and scene-control flow.
 
 Codex runs through `codex app-server --stdio` using the existing ChatGPT subscription login. No OpenAI API key is requested, inspected, persisted, or passed to the child process. The Three.js renderer receives typed messages but has no filesystem, process, credential, or general-shell access.
 
@@ -39,7 +39,8 @@ Acoustic speaker output and physical microphone recognition were not independent
 
 ## Spoken controls and boundaries
 
-- Local controls include the optional click-to-talk button, stop, pause, repeat, show/hide activity, list/forget permissions, reset onboarding, preferred-name changes, microphone/caption/transcript toggles, alert modes, navigation modes, return home, stop camera, and focus by scene name.
+- Local controls include the optional click-to-talk button, chat show/hide and typed send, stop, pause, repeat, show/hide activity, list/forget permissions, reset onboarding, preferred-name changes, microphone/caption/transcript toggles, alert modes, navigation modes, return home, stop camera, and focus by scene name.
+- Windows speech now rejects low-confidence wake and dictation fragments and uses the OneCore media synthesis pipeline first, preferring a compatible Natural or HD voice when installed and falling back to legacy SAPI if that pipeline is unavailable.
 - User speech overrides in-progress Coda speech. Manual mouse, keyboard, wheel, or Escape input cancels agent camera motion immediately.
 - Agent scene requests are restricted to typed camera and surface commands. The agent receives a bounded structured scene snapshot and never captured pixels.
 - `remember this` stores only the classified capability and exact project scope. Credential access, remote publication, system configuration, and destructive access outside the workspace cannot be persisted.
