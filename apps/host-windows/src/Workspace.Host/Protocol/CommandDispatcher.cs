@@ -31,7 +31,8 @@ public sealed class CommandDispatcher(
     IWindowFocusService windowFocusService,
     IWindowCatalog? windowCatalog = null,
     WindowReconciler? windowReconciler = null,
-    IInputRouter? inputRouter = null)
+    IInputRouter? inputRouter = null,
+    ApplicationControlService? applicationControlService = null)
 {
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
 
@@ -57,6 +58,14 @@ public sealed class CommandDispatcher(
             {
                 "application.list" => await ListApplicationsAsync(command.Id, cancellationToken),
                 "application.launch" => await LaunchApplicationAsync(command, cancellationToken),
+                "application.search" => await SearchApplicationsAsync(command, cancellationToken),
+                "application.profile.list" => await ListProfilesAsync(command.Id, cancellationToken),
+                "application.profile.save" => await SaveProfileAsync(command, cancellationToken),
+                "application.profile.delete" => await DeleteProfileAsync(command, cancellationToken),
+                "application.open" => await OpenApplicationAsync(command, cancellationToken),
+                "application.close" => await CloseApplicationAsync(command, cancellationToken),
+                "application.restart" => await RestartApplicationAsync(command, cancellationToken),
+                "surface.bindWindow" => await BindSurfaceWindowAsync(command, cancellationToken),
                 "entity.setPresentation" => await SetPresentationAsync(command, cancellationToken),
                 "window.focus" => await FocusWindowAsync(command, cancellationToken),
                 "window.input" => await RouteWindowInputAsync(command, cancellationToken),
@@ -77,6 +86,14 @@ public sealed class CommandDispatcher(
         {
             return Error(command.Id, "INPUT_TARGET_NOT_PERMITTED", exception.Message);
         }
+        catch (JsonException)
+        {
+            return Error(command.Id, "invalid_payload", "Request payload is invalid.");
+        }
+        catch (ApplicationControlException exception)
+        {
+            return Error(command.Id, exception.Code, exception.Message);
+        }
         catch (Exception exception)
         {
             return Error(command.Id, "operation_failed", exception.Message);
@@ -89,6 +106,76 @@ public sealed class CommandDispatcher(
     {
         var applications = await applicationCatalog.ListAsync(cancellationToken);
         return Result(commandId, applications);
+    }
+
+    private async Task<DispatchOutcome> SearchApplicationsAsync(ProtocolEnvelope command, CancellationToken cancellationToken)
+    {
+        var control = RequireApplicationControl();
+        if (command.Payload is not { ValueKind: JsonValueKind.Object } payload)
+            return Error(command.Id, "invalid_payload", "Application search requires a query payload.");
+        return Result(command.Id!, await control.SearchAsync(ApplicationControlRequestParser.ParseSearch(payload), cancellationToken));
+    }
+
+    private async Task<DispatchOutcome> ListProfilesAsync(string commandId, CancellationToken cancellationToken) =>
+        Result(commandId, await RequireApplicationControl().ListProfilesAsync(cancellationToken));
+
+    private async Task<DispatchOutcome> SaveProfileAsync(ProtocolEnvelope command, CancellationToken cancellationToken)
+    {
+        if (command.Payload is not { ValueKind: JsonValueKind.Object } payload)
+            return Error(command.Id, "invalid_payload", "Profile save requires a profile payload.");
+        var request = ApplicationControlRequestParser.ParseProfile(payload);
+        var profile = new ApplicationLaunchProfile(request.Id, request.DisplayName, request.ApplicationId,
+            request.Arguments, request.WorkingDirectory, request.LaunchPolicy, request.PreferredSurfaceId,
+            request.PreferredPresentation);
+        await RequireApplicationControl().SaveProfileAsync(profile, cancellationToken);
+        return Result(command.Id!, profile);
+    }
+
+    private async Task<DispatchOutcome> DeleteProfileAsync(ProtocolEnvelope command, CancellationToken cancellationToken)
+    {
+        if (command.Payload is not { ValueKind: JsonValueKind.Object } payload)
+            return Error(command.Id, "invalid_payload", "Profile delete requires a profile id payload.");
+        var profileId = ApplicationControlRequestParser.ParseProfileId(payload);
+        var deleted = await RequireApplicationControl().DeleteProfileAsync(profileId, cancellationToken);
+        return Result(command.Id!, new { profileId, deleted });
+    }
+
+    private async Task<DispatchOutcome> OpenApplicationAsync(ProtocolEnvelope command, CancellationToken cancellationToken)
+    {
+        if (command.Payload is not { ValueKind: JsonValueKind.Object } payload)
+            return Error(command.Id, "invalid_payload", "Application open requires a structured payload.");
+        var request = ApplicationControlRequestParser.ParseOpen(payload);
+        if (string.IsNullOrWhiteSpace(request.ApplicationId) && string.IsNullOrWhiteSpace(request.ProfileId))
+            return Error(command.Id, "invalid_target", "Application open requires an application id or profile id.");
+        var result = await RequireApplicationControl().OpenAsync(new ApplicationOpenRequest(command.Id!,
+            request.ApplicationId, request.ProfileId, request.LaunchPolicy, request.SurfaceEntityId,
+            request.ReplaceOccupied, request.ApprovalSource), cancellationToken);
+        return Result(command.Id!, result);
+    }
+
+    private async Task<DispatchOutcome> CloseApplicationAsync(ProtocolEnvelope command, CancellationToken cancellationToken)
+    {
+        if (command.Payload is not { ValueKind: JsonValueKind.Object } payload)
+            return Error(command.Id, "invalid_payload", "Application close requires a structured payload.");
+        return Result(command.Id!, await RequireApplicationControl().CloseAsync(
+            ApplicationControlRequestParser.ParseClose(command.Id!, payload), cancellationToken));
+    }
+
+    private async Task<DispatchOutcome> RestartApplicationAsync(ProtocolEnvelope command, CancellationToken cancellationToken)
+    {
+        if (command.Payload is not { ValueKind: JsonValueKind.Object } payload)
+            return Error(command.Id, "invalid_payload", "Application restart requires a structured payload.");
+        return Result(command.Id!, await RequireApplicationControl().RestartAsync(
+            ApplicationControlRequestParser.ParseRestart(command.Id!, payload), cancellationToken));
+    }
+
+    private async Task<DispatchOutcome> BindSurfaceWindowAsync(ProtocolEnvelope command, CancellationToken cancellationToken)
+    {
+        if (command.Payload is not { ValueKind: JsonValueKind.Object } payload)
+            return Error(command.Id, "invalid_payload", "Surface binding requires a structured payload.");
+        var request = ApplicationControlRequestParser.ParseSurfaceBind(payload);
+        await RequireApplicationControl().BindWindowAsync(request, cancellationToken);
+        return Result(command.Id!, new { request.SurfaceEntityId, request.WindowEntityId });
     }
 
     private async Task<DispatchOutcome> LaunchApplicationAsync(
@@ -536,6 +623,9 @@ public sealed class CommandDispatcher(
 
         return null;
     }
+
+    private ApplicationControlService RequireApplicationControl() => applicationControlService
+        ?? throw new ApplicationControlException("application_control_unavailable", "Application control is not configured.");
 
     private static DispatchOutcome Result(string commandId, object? payload = null) =>
         new(ProtocolEnvelope.Result(commandId, payload), []);

@@ -28,6 +28,23 @@ public sealed class ProtocolTests : IDisposable
         Assert.Contains("protocol", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Application_open_payload_uses_literal_json_and_rejects_unexpected_fields()
+    {
+        var accepted = ApplicationControlRequestParser.ParseOpen(
+            JsonDocument.Parse("""
+            {"applicationId":"pc.application:notepad","launchPolicy":"reuseOrLaunch","surfaceEntityId":"spatial.surface:right","replaceOccupied":false}
+            """).RootElement);
+
+        Assert.Equal("pc.application:notepad", accepted.ApplicationId);
+        Assert.Equal(ApplicationLaunchPolicy.ReuseOrLaunch, accepted.LaunchPolicy);
+
+        Assert.Throws<JsonException>(() => ApplicationControlRequestParser.ParseOpen(
+            JsonDocument.Parse("""
+            {"applicationId":"pc.application:notepad","arbitraryCommand":"cmd.exe /c whoami"}
+            """).RootElement));
+    }
+
     [Theory]
     [InlineData(null, true)]
     [InlineData("http://127.0.0.1:5173", true)]

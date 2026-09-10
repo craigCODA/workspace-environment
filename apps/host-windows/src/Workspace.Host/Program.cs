@@ -54,6 +54,18 @@ catch (Exception exception)
 
 await using var windowReconciler = new WindowReconciler(windowCapture);
 var inputRouter = new Win32InputRouter();
+var applicationControl = new ApplicationControlService(
+    applicationCatalog,
+    new ApplicationLauncher(new SystemProcessLauncher()),
+    store,
+    windowCatalog,
+    new Win32WindowLifecycleService(windowCatalog),
+    new Win32WindowFocusService(windowCatalog, windowReconciler),
+    applicationProfileStore,
+    new ApplicationControlAuditStore(Path.Combine(
+        localData,
+        "WorkspaceEnvironment",
+        "application-control-audit.json")));
 var dispatcher = new CommandDispatcher(
     applicationCatalog,
     new ApplicationLauncher(new SystemProcessLauncher()),
@@ -61,7 +73,8 @@ var dispatcher = new CommandDispatcher(
     new Win32WindowFocusService(windowCatalog, windowReconciler),
     windowCatalog,
     windowReconciler,
-    inputRouter);
+    inputRouter,
+    applicationControl);
 var protocolServer = new WorkspaceProtocolServer(dispatcher, store);
 
 using var shutdown = new CancellationTokenSource();
