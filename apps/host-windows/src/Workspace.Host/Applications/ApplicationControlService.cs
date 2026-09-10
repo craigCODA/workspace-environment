@@ -42,11 +42,15 @@ public sealed record ApplicationCloseResult(
     string WindowEntityId,
     ApplicationLifecycleState State);
 
-public sealed record ApplicationRestartRequest(string OperationId, string WindowEntityId, string? ApprovalSource = null);
+public sealed record ApplicationRestartRequest(
+    string OperationId,
+    string? WindowEntityId,
+    string? ApprovalSource = null,
+    string? ProfileId = null);
 
 public sealed record ApplicationRestartResult(
     string OperationId,
-    string WindowEntityId,
+    string? WindowEntityId,
     ApplicationLifecycleState State,
     ApplicationOpenResult? OpenResult);
 
@@ -54,6 +58,8 @@ public sealed record ApplicationSearchResult(
     ApplicationResolutionStatus Status,
     ApplicationDescriptor? Application,
     IReadOnlyList<ApplicationDescriptor> Candidates);
+
+public sealed record ApplicationSearchRequest(string Query, int Limit);
 
 public sealed class ApplicationControlException(string code, string message) : Exception(message)
 {
@@ -116,9 +122,10 @@ public static class ApplicationControlRequestParser
 
     public static ApplicationRestartRequest ParseRestart(string operationId, JsonElement payload)
     {
-        var request = Deserialize<WindowRequest>(payload);
-        if (!HasText(request.WindowEntityId)) throw new JsonException("windowEntityId is required.");
-        return new ApplicationRestartRequest(operationId, request.WindowEntityId, request.ApprovalSource);
+        var request = Deserialize<RestartRequest>(payload);
+        if (HasText(request.WindowEntityId) == HasText(request.ProfileId))
+            throw new JsonException("Restart requires exactly one windowEntityId or profileId.");
+        return new ApplicationRestartRequest(operationId, request.WindowEntityId, request.ApprovalSource, request.ProfileId);
     }
 
     public static ApplicationProfileProtocolRequest ParseProfile(JsonElement payload)
@@ -144,10 +151,13 @@ public static class ApplicationControlRequestParser
         return request;
     }
 
-    public static string ParseSearch(JsonElement payload)
+    public static ApplicationSearchRequest ParseSearch(JsonElement payload)
     {
-        var query = Deserialize<SearchRequest>(payload).Query;
-        return HasText(query) ? query : throw new JsonException("query is required.");
+        var request = Deserialize<SearchRequest>(payload);
+        if (!HasText(request.Query)) throw new JsonException("query is required.");
+        var limit = request.Limit ?? 10;
+        if (limit is < 1 or > 10) throw new JsonException("limit must be from 1 through 10.");
+        return new ApplicationSearchRequest(request.Query, limit);
     }
 
     private static T Deserialize<T>(JsonElement payload) where T : class =>
@@ -158,9 +168,11 @@ public static class ApplicationControlRequestParser
 
     private sealed record WindowRequest(string? WindowEntityId, string? ApprovalSource);
 
+    private sealed record RestartRequest(string? WindowEntityId, string? ProfileId, string? ApprovalSource);
+
     private sealed record ProfileIdRequest(string? ProfileId);
 
-    private sealed record SearchRequest(string? Query);
+    private sealed record SearchRequest(string? Query, int? Limit);
 }
 
 public sealed record SurfaceBindRequest(string SurfaceEntityId, string WindowEntityId, bool? ReplaceOccupied);
@@ -267,11 +279,14 @@ public sealed class ApplicationControlService(
     private static readonly TimeSpan WindowWaitTimeout = TimeSpan.FromSeconds(5);
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
 
-    public async Task<ApplicationSearchResult> SearchAsync(string query, CancellationToken cancellationToken)
+    public async Task<ApplicationSearchResult> SearchAsync(ApplicationSearchRequest request, CancellationToken cancellationToken)
     {
         var applications = await applicationCatalog.ListAsync(cancellationToken);
-        var resolution = ApplicationResolver.Resolve(query, applications);
-        return new ApplicationSearchResult(resolution.Status, resolution.Application, resolution.Candidates);
+        var resolution = ApplicationResolver.Resolve(request.Query, applications);
+        var candidates = resolution.Application is null
+            ? resolution.Candidates.Take(request.Limit).ToArray()
+            : resolution.Candidates;
+        return new ApplicationSearchResult(resolution.Status, resolution.Application, candidates);
     }
 
     public Task<IReadOnlyList<ApplicationLaunchProfile>> ListProfilesAsync(CancellationToken cancellationToken) =>
@@ -358,9 +373,37 @@ public sealed class ApplicationControlService(
 
     public async Task<ApplicationRestartResult> RestartAsync(ApplicationRestartRequest request, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(request.WindowEntityId) == string.IsNullOrWhiteSpace(request.ProfileId))
+            throw new ApplicationControlException("invalid_target", "Restart requires exactly one window or profile identity.");
+        if (!string.IsNullOrWhiteSpace(request.WindowEntityId))
+            return await RestartWindowAsync(request, request.WindowEntityId, cancellationToken);
+
+        var profile = await RequireProfileStore().FindAsync(request.ProfileId!, cancellationToken)
+            ?? throw new ApplicationControlException("profile_not_found", "Launch profile was not found.");
+        var document = await workspaceStore.LoadAsync(cancellationToken);
+        var matchingWindows = document.Entities.Where(entity => entity.Kind == EntityKinds.Window
+            && entity.Properties.TryGetValue("profileId", out var profileProperty)
+            && string.Equals(profileProperty.GetString(), profile.Id, StringComparison.Ordinal)).ToArray();
+        if (matchingWindows.Length == 0)
+        {
+            await AuditAsync(request.OperationId, "application.restart", profile.ApplicationId, null, null,
+                request.ApprovalSource, ApplicationLifecycleState.NotRunning, null, cancellationToken);
+            return new ApplicationRestartResult(request.OperationId, null, ApplicationLifecycleState.NotRunning, null);
+        }
+        if (matchingWindows.Length > 1)
+            throw new ApplicationControlException("application_window_ambiguous", "Multiple persisted windows match the profile.");
+        return await RestartWindowAsync(request, matchingWindows[0].Id, cancellationToken);
+    }
+
+    private async Task<ApplicationRestartResult> RestartWindowAsync(
+        ApplicationRestartRequest request,
+        string windowEntityId,
+        CancellationToken cancellationToken)
+    {
         var document = await workspaceStore.LoadAsync(cancellationToken);
         var window = document.Entities.FirstOrDefault(entity =>
-            entity.Kind == EntityKinds.Window && string.Equals(entity.Id, request.WindowEntityId, StringComparison.Ordinal));
+            entity.Kind == EntityKinds.Window && string.Equals(entity.Id, windowEntityId, StringComparison.Ordinal));
         if (window is null) throw new ApplicationControlException("window_not_found", "Window entity was not found.");
         var applicationId = window.Properties.TryGetValue("applicationId", out var applicationProperty)
             ? applicationProperty.GetString()
@@ -369,17 +412,17 @@ public sealed class ApplicationControlService(
             throw new ApplicationControlException("invalid_window", "Window entity has no application identity.");
         var surfaceId = document.Entities.FirstOrDefault(entity => entity.Kind == EntityKinds.Surface
             && entity.Relationships.Any(relationship => relationship.Type == "displays"
-                && relationship.TargetId == request.WindowEntityId))?.Id;
+                && relationship.TargetId == windowEntityId))?.Id;
         var profileId = window.Properties.TryGetValue("profileId", out var profileProperty)
             ? profileProperty.GetString()
             : null;
 
-        var close = await windowLifecycleService.RequestCloseAsync(request.WindowEntityId, CloseTimeout, cancellationToken);
+        var close = await windowLifecycleService.RequestCloseAsync(windowEntityId, CloseTimeout, cancellationToken);
         var closeState = ToLifecycleState(close);
         if (close == WindowCloseState.ClosePending)
         {
-            var pending = new ApplicationRestartResult(request.OperationId, request.WindowEntityId, closeState, null);
-            await AuditAsync(request.OperationId, "application.restart", applicationId, request.WindowEntityId, surfaceId,
+            var pending = new ApplicationRestartResult(request.OperationId, windowEntityId, closeState, null);
+            await AuditAsync(request.OperationId, "application.restart", applicationId, windowEntityId, surfaceId,
                 request.ApprovalSource, closeState, null, cancellationToken);
             return pending;
         }
@@ -390,9 +433,9 @@ public sealed class ApplicationControlService(
         var finalState = open.Disposition == ApplicationOpenDisposition.LaunchedWithoutWindow
             ? ApplicationLifecycleState.LaunchedWithoutWindow
             : ApplicationLifecycleState.Open;
-        await AuditAsync(request.OperationId, "application.restart", applicationId, request.WindowEntityId,
+        await AuditAsync(request.OperationId, "application.restart", applicationId, windowEntityId,
             surfaceId, request.ApprovalSource, finalState, null, cancellationToken);
-        return new ApplicationRestartResult(request.OperationId, request.WindowEntityId, finalState, open);
+        return new ApplicationRestartResult(request.OperationId, windowEntityId, finalState, open);
     }
 
     public async Task BindWindowAsync(SurfaceBindRequest request, CancellationToken cancellationToken)

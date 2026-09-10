@@ -65,13 +65,18 @@ function presentation(value: unknown): PresentationState {
   hasOnlyKeys(position, new Set(['x', 'y', 'z']));
   hasOnlyKeys(rotation, new Set(['x', 'y', 'z', 'w']));
   hasOnlyKeys(size, new Set(['x', 'y', 'z']));
-  return {
+  const parsed = {
     position: { x: finite(position.x, 'presentation.position.x'), y: finite(position.y, 'presentation.position.y'), z: finite(position.z, 'presentation.position.z') },
     rotation: { x: finite(rotation.x, 'presentation.rotation.x'), y: finite(rotation.y, 'presentation.rotation.y'), z: finite(rotation.z, 'presentation.rotation.z'), w: finite(rotation.w, 'presentation.rotation.w') },
     size: { x: finite(size.x, 'presentation.size.x'), y: finite(size.y, 'presentation.size.y'), z: finite(size.z, 'presentation.size.z') },
     ...(source.parentPresentationId === undefined ? {} : { parentPresentationId: text(source.parentPresentationId, 'presentation.parentPresentationId') }),
     ...(source.representation === undefined ? {} : { representation: text(source.representation, 'presentation.representation') }),
   };
+  if (parsed.size.x <= 0 || parsed.size.y <= 0 || parsed.size.z <= 0) throw new Error('presentation size must be positive.');
+  if (parsed.rotation.x ** 2 + parsed.rotation.y ** 2 + parsed.rotation.z ** 2 + parsed.rotation.w ** 2 === 0) {
+    throw new Error('presentation rotation must be nonzero.');
+  }
+  return parsed;
 }
 
 function absoluteWindowsPath(value: unknown, label: string): string {
@@ -85,6 +90,12 @@ function absoluteWindowsPath(value: unknown, label: string): string {
 function launchPolicy(value: unknown): 'reuseOrLaunch' | 'newInstance' {
   if (value !== 'reuseOrLaunch' && value !== 'newInstance') throw new Error('launchPolicy is invalid.');
   return value;
+}
+
+function windowEntityId(value: unknown): string {
+  const id = text(value, 'windowEntityId');
+  if (!id.startsWith('pc.window:')) throw new Error('windowEntityId must identify a pc.window.');
+  return id;
 }
 
 function zero(value: number): number {
@@ -184,15 +195,18 @@ export class WorkspaceCommandController {
       if ((args.windowEntityId === undefined) === (args.profileId === undefined)) {
         throw new Error('application.restart requires exactly one windowEntityId or profileId.');
       }
-      if (args.windowEntityId !== undefined) text(args.windowEntityId, 'windowEntityId');
+      if (args.windowEntityId !== undefined) windowEntityId(args.windowEntityId);
       if (args.profileId !== undefined) text(args.profileId, 'profileId');
     }
     if (command === 'application.profile.save') this.#validateProfile(args);
     if (command === 'surface.bindWindow') {
       const surfaceId = text(args.surfaceEntityId, 'surfaceEntityId');
-      if (!this.#knownSurfaceIds().has(surfaceId)) throw new Error(`Unknown display surface: ${surfaceId}.`);
-      text(args.windowEntityId, 'windowEntityId');
+      if (!surfaceId.startsWith('spatial.surface:') || !this.#knownSurfaceIds().has(surfaceId)) throw new Error(`Unknown display surface: ${surfaceId}.`);
+      windowEntityId(args.windowEntityId);
+      if (args.replaceOccupied !== undefined && typeof args.replaceOccupied !== 'boolean') throw new Error('replaceOccupied must be boolean.');
     }
+    if (command === 'application.close') windowEntityId(args.windowEntityId);
+    if ((command === 'application.close' || command === 'application.restart') && args.approvalSource !== undefined) text(args.approvalSource, 'approvalSource');
     return { ...args };
   }
 
@@ -218,7 +232,7 @@ export class WorkspaceCommandController {
 
   #windowFocusTarget(args: Record<string, unknown>): string {
     hasOnlyKeys(args, new Set(['windowEntityId']));
-    return text(args.windowEntityId, 'windowEntityId');
+    return windowEntityId(args.windowEntityId);
   }
 
   #resolveSurfaceId(value: unknown): string {

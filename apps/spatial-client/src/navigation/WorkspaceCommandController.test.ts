@@ -192,3 +192,24 @@ test('returns a deterministic safe host-failure category instead of exception te
 
   assert.deepEqual(result, { id: 'safe-error', ok: false, error: 'workspace_command_failed' });
 });
+
+test('blocks malformed presentation and entity-operation values before send', async () => {
+  const calls: unknown[][] = [];
+  const controller = new WorkspaceCommandController(
+    { sendCommand: async (...args: unknown[]) => { calls.push(args); return {}; } }, () => null,
+    { surfaceIds: () => ['spatial.surface:right'] },
+  );
+  const basePresentation = { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, size: { x: 1, y: 1, z: 1 } };
+  const invalid = [
+    { ...basePresentation, size: { x: 0, y: 1, z: 1 } },
+    { ...basePresentation, size: { x: -1, y: 1, z: 1 } },
+    { ...basePresentation, rotation: { x: 0, y: 0, z: 0, w: 0 } },
+  ];
+  for (const presentation of invalid) {
+    assert.equal((await controller.handle({ id: `presentation-${presentation.size.x}`, command: 'application.open', args: { applicationId: 'app:notepad', presentation } })).ok, false);
+  }
+  assert.equal((await controller.handle({ id: 'focus-bad', command: 'window.focus', args: { windowEntityId: 'pc.application:notepad' } })).ok, false);
+  assert.equal((await controller.handle({ id: 'close-source', command: 'application.close', args: { windowEntityId: 'pc.window:notepad', approvalSource: 7 } })).ok, false);
+  assert.equal((await controller.handle({ id: 'bind-bad', command: 'surface.bindWindow', args: { surfaceEntityId: 'spatial.surface:right', windowEntityId: 'pc.window:notepad', replaceOccupied: 'yes' } })).ok, false);
+  assert.deepEqual(calls, []);
+});

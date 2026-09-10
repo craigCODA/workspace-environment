@@ -99,6 +99,30 @@ public sealed class ProtocolTests : IDisposable
         Assert.Throws<JsonException>(() => ApplicationControlRequestParser.ParseRestart("restart-1", document.RootElement));
     }
 
+    [Fact]
+    public void Application_search_limit_and_profile_restart_payloads_are_strict()
+    {
+        var search = ApplicationControlRequestParser.ParseSearch(JsonDocument.Parse("""
+        {"query":"Notepad","limit":3}
+        """).RootElement);
+        Assert.Equal(3, search.Limit);
+        Assert.Equal(10, ApplicationControlRequestParser.ParseSearch(JsonDocument.Parse("""
+        {"query":"Notepad"}
+        """).RootElement).Limit);
+        Assert.Throws<JsonException>(() => ApplicationControlRequestParser.ParseSearch(JsonDocument.Parse("""
+        {"query":"Notepad","limit":11}
+        """).RootElement));
+
+        var restart = ApplicationControlRequestParser.ParseRestart("restart-profile", JsonDocument.Parse("""
+        {"profileId":"profile:notepad","approvalSource":"fresh"}
+        """).RootElement);
+        Assert.Null(restart.WindowEntityId);
+        Assert.Equal("profile:notepad", restart.ProfileId);
+        Assert.Throws<JsonException>(() => ApplicationControlRequestParser.ParseRestart("restart-both", JsonDocument.Parse("""
+        {"windowEntityId":"pc.window:notepad","profileId":"profile:notepad"}
+        """).RootElement));
+    }
+
     [Theory]
     [InlineData(null, true)]
     [InlineData("http://127.0.0.1:5173", true)]

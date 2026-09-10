@@ -50,6 +50,22 @@ public sealed class ApplicationControlTests
     }
 
     [Fact]
+    public async Task Restart_by_existing_profile_with_no_persisted_window_is_truthfully_not_running_without_side_effect()
+    {
+        var profile = new ApplicationLaunchProfile("profile:notepad", "Notepad", "app:notepad", [], null,
+            ApplicationLaunchPolicy.ReuseOrLaunch, null, null);
+        var fixture = ApplicationControlFixture.WithProfile(profile);
+
+        var result = await fixture.Service.RestartAsync(
+            new ApplicationRestartRequest("restart-profile-none", null, ProfileId: profile.Id), CancellationToken.None);
+
+        Assert.Equal(ApplicationLifecycleState.NotRunning, result.State);
+        Assert.Null(result.WindowEntityId);
+        Assert.Empty(fixture.Lifecycle.RequestedCloseIds);
+        Assert.Equal(0, fixture.ProcessLauncher.LaunchCount);
+    }
+
+    [Fact]
     public async Task New_instance_attempts_launch_even_when_a_window_is_visible()
     {
         var fixture = ApplicationControlFixture.WithVisibleWindow(
