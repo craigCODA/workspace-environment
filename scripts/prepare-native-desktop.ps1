@@ -19,6 +19,18 @@ $stagingRoot = Join-Path $resolvedOutputRoot ".staging-$versionId"
 $versionRoot = Join-Path $resolvedOutputRoot $versionId
 $desktopRoot = Join-Path $stagingRoot 'desktop'
 
+function Get-StagedSha256([string]$Path) {
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        return [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '')
+    }
+    finally {
+        $stream.Dispose()
+        $algorithm.Dispose()
+    }
+}
+
 if (Test-Path -LiteralPath $stagingRoot) {
     throw "The staging directory already exists: $stagingRoot"
 }
@@ -59,7 +71,7 @@ try {
             throw "A staged file escaped the version root: $($_.FullName)"
         }
         $relative = $_.FullName.Substring($stagingPrefix.Length).Replace('\', '/')
-        $files[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+        $files[$relative] = Get-StagedSha256 $_.FullName
     }
     $manifest = [ordered]@{
         schemaVersion = 1
