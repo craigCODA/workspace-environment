@@ -120,6 +120,21 @@ public sealed class VoiceConversationControllerTests
     }
 
     [Fact]
+    public async Task Unconfirmed_name_times_out_and_click_to_talk_restarts_name_setup()
+    {
+        var fixture = new VoiceFixture(TimeSpan.FromMilliseconds(15));
+        await fixture.Controller.StartAsync(Profile(onboardingCompleted: false));
+        await fixture.Recognizer.EmitRecognizedAsync("room noise");
+
+        await Task.Delay(80);
+        Assert.Equal(VoiceState.Dormant, fixture.Controller.State);
+        await fixture.Controller.BeginConversationAsync();
+
+        Assert.Equal("What should I call you?", fixture.Synthesizer.Spoken[^1]);
+        Assert.DoesNotContain(fixture.Events, item => item is PreferredNameCaptured);
+    }
+
+    [Fact]
     public async Task Returning_launch_uses_the_saved_name_and_waits_for_wake_word()
     {
         var fixture = new VoiceFixture();

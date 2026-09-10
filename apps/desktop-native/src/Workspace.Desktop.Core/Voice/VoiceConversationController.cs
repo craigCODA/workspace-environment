@@ -221,6 +221,7 @@ public sealed class VoiceConversationController : IAsyncDisposable
 
     public async Task BeginConversationAsync(CancellationToken cancellationToken = default)
     {
+        var promptForName = false;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -232,11 +233,20 @@ public sealed class VoiceConversationController : IAsyncDisposable
             }
 
             _conversationActive = true;
+            if (!_profile.OnboardingCompleted && _pendingPreferredName is null)
+            {
+                _awaitingPreferredName = true;
+                promptForName = true;
+            }
             await EnterListeningAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _gate.Release();
+        }
+        if (promptForName)
+        {
+            await SpeakAsync("What should I call you?", cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -299,6 +309,7 @@ public sealed class VoiceConversationController : IAsyncDisposable
 
     private async Task OnWakeWordDetectedAsync(object? sender, WakeWordDetectedEventArgs args)
     {
+        var promptForName = false;
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -310,11 +321,20 @@ public sealed class VoiceConversationController : IAsyncDisposable
             SetState(VoiceState.WakeDetected);
             await StopWakeWordAsync().ConfigureAwait(false);
             _conversationActive = true;
+            if (!_profile.OnboardingCompleted && _pendingPreferredName is null)
+            {
+                _awaitingPreferredName = true;
+                promptForName = true;
+            }
             await EnterListeningAsync().ConfigureAwait(false);
         }
         finally
         {
             _gate.Release();
+        }
+        if (promptForName)
+        {
+            await SpeakAsync("What should I call you?").ConfigureAwait(false);
         }
     }
 
@@ -361,6 +381,11 @@ public sealed class VoiceConversationController : IAsyncDisposable
                     capturedName = _pendingPreferredName;
                     _pendingPreferredName = null;
                     _conversationActive = false;
+                    _profile = _profile with
+                    {
+                        PreferredName = capturedName,
+                        OnboardingCompleted = true,
+                    };
                     Raise(new PreferredNameCaptured(capturedName, _timeProvider.GetUtcNow()));
                     await StopRecognizerAsync().ConfigureAwait(false);
                 }
@@ -542,8 +567,8 @@ public sealed class VoiceConversationController : IAsyncDisposable
             {
                 if (_silenceCancellation == source && State == VoiceState.Listening)
                 {
-                    _awaitingPreferredName = false;
                     _pendingPreferredName = null;
+                    _awaitingPreferredName = !_profile.OnboardingCompleted;
                     await EnterDormantAsync(source.Token).ConfigureAwait(false);
                 }
             }
