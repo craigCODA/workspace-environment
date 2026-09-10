@@ -35,6 +35,31 @@ public sealed class CodexAppServerProtocolTests
     }
 
     [Fact]
+    public void Thread_start_and_resume_pin_Coda_to_gpt_5_5_with_high_reasoning()
+    {
+        using var start = JsonDocument.Parse(CodexProtocolMessages.StartThread(
+            3,
+            @"C:\work\scene",
+            AgentSandbox.ReadOnly));
+        using var resume = JsonDocument.Parse(CodexProtocolMessages.ResumeThread(
+            4,
+            "thread-1",
+            @"C:\work\scene",
+            AgentSandbox.ReadOnly));
+
+        foreach (var parameters in new[]
+                 {
+                     start.RootElement.GetProperty("params"),
+                     resume.RootElement.GetProperty("params"),
+                 })
+        {
+            Assert.Equal("gpt-5.5", parameters.GetProperty("model").GetString());
+            Assert.Equal("high", parameters.GetProperty("config")
+                .GetProperty("model_reasoning_effort").GetString());
+        }
+    }
+
+    [Fact]
     public void Turn_start_and_steer_use_text_input_arrays()
     {
         using var start = JsonDocument.Parse(CodexProtocolMessages.StartTurn(

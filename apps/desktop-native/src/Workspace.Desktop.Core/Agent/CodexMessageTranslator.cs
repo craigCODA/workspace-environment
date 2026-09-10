@@ -191,6 +191,9 @@ public sealed partial class CodexMessageTranslator(TimeProvider? timeProvider = 
 
 public static class CodexProtocolMessages
 {
+    public const string DefaultModel = "gpt-5.5";
+    public const string DefaultReasoningEffort = "high";
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public static string Initialize(long requestId) => SerializeRequest(
@@ -213,6 +216,8 @@ public static class CodexProtocolMessages
         SerializeRequest(requestId, "thread/start", new
         {
             cwd,
+            model = DefaultModel,
+            config = new { model_reasoning_effort = DefaultReasoningEffort },
             approvalPolicy = "on-request",
             approvalsReviewer = "user",
             sandbox = SandboxName(sandbox),
@@ -226,6 +231,8 @@ public static class CodexProtocolMessages
         {
             threadId,
             cwd,
+            model = DefaultModel,
+            config = new { model_reasoning_effort = DefaultReasoningEffort },
             approvalPolicy = "on-request",
             approvalsReviewer = "user",
             sandbox = SandboxName(sandbox),
