@@ -146,6 +146,18 @@ Input:
 
 Result entries expose stable ID, display name, aliases, launch kind, running state, and available profile names. This operation is read-only.
 
+### `application.profile.list`
+
+Returns saved launch profiles with stable profile and application IDs, display names, argument lists, working directories, launch policies, and preferred surface IDs. This operation is read-only.
+
+### `application.profile.save`
+
+Input contains a display name, a resolved application ID, a structured argument list, an optional fully qualified working directory, a launch policy, and optional preferred surface or presentation. It creates or replaces one stable profile after `application.profile.edit` approval. The operation rejects executable paths, shell command strings, relative working directories, credentials, secret environment values, and arguments not shown in the approval prompt.
+
+### `application.profile.delete`
+
+Input contains one stable profile ID. It removes only that profile after `application.profile.edit` approval and never closes the associated application or removes its workspace entities.
+
 ### `application.open`
 
 Input:
@@ -193,6 +205,9 @@ The native application parses a separate allowlisted workspace directive rather 
 Allowed commands in this slice are:
 
 - `application.search`;
+- `application.profile.list`;
+- `application.profile.save`;
+- `application.profile.delete`;
 - `application.open`;
 - `application.close`;
 - `application.restart`;
