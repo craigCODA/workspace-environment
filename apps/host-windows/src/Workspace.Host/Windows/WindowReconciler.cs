@@ -69,7 +69,7 @@ public sealed class WindowReconciler : IAsyncDisposable
             throw new InvalidOperationException("Window capture is not configured.");
         }
 
-        var entityId = ResolveEntityId(snapshot);
+        var entityId = ResolveExactEntityId(snapshot);
         await _gate.WaitAsync(cancellationToken);
         try
         {

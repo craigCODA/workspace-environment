@@ -55,7 +55,8 @@ public sealed class WindowReconcilerTests
 
         Assert.Empty(reconciler.ActiveCaptureStreams);
         Assert.Equal(opened.Stream.StreamId, Assert.Single(capture.StoppedStreamIds));
-        Assert.Equal(opened.EntityId, reconciler.ResolveEntityId(window with
+        Assert.Equal(reconciler.ResolveExactEntityId(window), opened.EntityId);
+        Assert.Equal(reconciler.ResolveEntityId(window), reconciler.ResolveEntityId(window with
         {
             Hwnd = (nint)999,
             ProcessId = 22,
@@ -63,7 +64,7 @@ public sealed class WindowReconcilerTests
     }
 
     [Fact]
-    public async Task RecreatedWindowReplacesRuntimeStreamButKeepsEntityIdentity()
+    public async Task DistinctTrackedWindowsUseExactRuntimeIdentityAndIndependentStreams()
     {
         var capture = new RecordingWindowCapture();
         var reconciler = new WindowReconciler(capture);
@@ -83,9 +84,12 @@ public sealed class WindowReconcilerTests
             ProcessId = 22,
         }, CancellationToken.None);
 
-        Assert.Equal(opened.EntityId, rebound.EntityId);
+        Assert.Equal(reconciler.ResolveExactEntityId(first), opened.EntityId);
+        Assert.Equal(reconciler.ResolveExactEntityId(first with { Hwnd = (nint)999, ProcessId = 22 }), rebound.EntityId);
+        Assert.NotEqual(opened.EntityId, rebound.EntityId);
         Assert.NotEqual(opened.Stream.StreamId, rebound.Stream.StreamId);
-        Assert.Contains(opened.Stream.StreamId, capture.StoppedStreamIds);
+        Assert.Equal(2, reconciler.ActiveCaptureStreams.Count);
+        Assert.Empty(capture.StoppedStreamIds);
     }
 
     [Fact]
@@ -153,6 +157,33 @@ public sealed class WindowReconcilerTests
 
         Assert.Equal(legacyStream, exactStream);
         Assert.Single(reconciler.ActiveCaptureStreams);
+    }
+
+    [Fact]
+    public async Task Tracked_stream_reused_by_exact_id_survives_live_reconcile_and_stops_once_on_disappearance()
+    {
+        var capture = new RecordingWindowCapture();
+        var reconciler = new WindowReconciler(capture);
+        var window = new WindowSnapshot((nint)0x2a, 42, "Workspace Test Window",
+            new WindowBounds(0, 0, 800, 600), true, false, "pc.application:workspace-test");
+        var tracked = await reconciler.TrackAsync(window, CancellationToken.None);
+
+        var exactStream = await reconciler.OpenSurfaceAsync(
+            reconciler.ResolveExactEntityId(window), CancellationToken.None);
+        var legacyStream = await reconciler.OpenSurfaceAsync(
+            reconciler.ResolveEntityId(window), CancellationToken.None);
+        await reconciler.ReconcileAsync([window], CancellationToken.None);
+
+        Assert.Equal(reconciler.ResolveExactEntityId(window), tracked.EntityId);
+        Assert.Equal(tracked.Stream, exactStream);
+        Assert.Equal(exactStream, legacyStream);
+        Assert.Single(reconciler.ActiveCaptureStreams);
+        Assert.Empty(capture.StoppedStreamIds);
+
+        await reconciler.ReconcileAsync([], CancellationToken.None);
+
+        Assert.Empty(reconciler.ActiveCaptureStreams);
+        Assert.Equal(exactStream.StreamId, Assert.Single(capture.StoppedStreamIds));
     }
 
     private sealed class RecordingWindowCapture : IWindowCapture
