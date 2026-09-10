@@ -50,11 +50,11 @@ public sealed class WindowsApplicationCatalog : IApplicationCatalog
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(displayName);
-        var normalized = displayName.Trim();
         var applications = await ListAsync(cancellationToken);
-
-        return applications.FirstOrDefault(app =>
-            string.Equals(app.DisplayName, normalized, StringComparison.OrdinalIgnoreCase));
+        var resolution = ApplicationResolver.Resolve(displayName, applications);
+        return resolution.Status == ApplicationResolutionStatus.Resolved
+            ? resolution.Application
+            : null;
     }
 
     private sealed class AppPathsInventorySource : IApplicationInventorySource
@@ -131,7 +131,7 @@ public sealed class WindowsApplicationCatalog : IApplicationCatalog
             {
                 try
                 {
-                    foreach (var shortcutPath in Directory.EnumerateFiles(directory, "*.lnk", SearchOption.AllDirectories))
+                    foreach (var shortcutPath in FindShortcuts(directory, cancellationToken))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         var locator = Path.GetFullPath(shortcutPath);
@@ -151,6 +151,40 @@ public sealed class WindowsApplicationCatalog : IApplicationCatalog
 
             return Task.FromResult<IReadOnlyList<ApplicationDescriptor>>(applications);
         }
+    }
+
+    private static IReadOnlyList<string> FindShortcuts(string rootDirectory, CancellationToken cancellationToken)
+    {
+        var shortcuts = new List<string>();
+        var directories = new Queue<string>();
+        directories.Enqueue(rootDirectory);
+
+        while (directories.TryDequeue(out var directory))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                shortcuts.AddRange(Directory.EnumerateFiles(directory, "*.lnk", SearchOption.TopDirectoryOnly));
+            }
+            catch (Exception exception) when (exception is SecurityException or UnauthorizedAccessException or IOException)
+            {
+                // One inaccessible directory must not suppress its accessible siblings.
+            }
+
+            try
+            {
+                foreach (var childDirectory in Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly))
+                {
+                    directories.Enqueue(childDirectory);
+                }
+            }
+            catch (Exception exception) when (exception is SecurityException or UnauthorizedAccessException or IOException)
+            {
+                // Its children cannot be read, but other queued directories remain available.
+            }
+        }
+
+        return shortcuts;
     }
 
     private sealed class AppsFolderInventorySource : IApplicationInventorySource
@@ -188,18 +222,18 @@ public sealed class WindowsApplicationCatalog : IApplicationCatalog
                 foreach (dynamic item in (IEnumerable)items)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var locator = item.Path as string;
+                    var appUserModelId = item.Path as string;
                     var displayName = item.Name as string;
-                    if (string.IsNullOrWhiteSpace(locator) || string.IsNullOrWhiteSpace(displayName))
+                    if (string.IsNullOrWhiteSpace(appUserModelId) || string.IsNullOrWhiteSpace(displayName))
                     {
                         continue;
                     }
 
                     applications.Add(new ApplicationDescriptor(
-                        CreateStableId(locator),
+                        CreateStableId(appUserModelId),
                         displayName.Trim(),
                         ApplicationLaunchKind.Packaged,
-                        locator,
+                        CreateAppsFolderLocator(appUserModelId),
                         Array.Empty<string>()));
                 }
             }
@@ -266,5 +300,15 @@ public sealed class WindowsApplicationCatalog : IApplicationCatalog
         var canonical = executablePath.Replace('/', '\\').ToUpperInvariant();
         var digest = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
         return $"pc.application:{Convert.ToHexString(digest[..12]).ToLowerInvariant()}";
+    }
+
+    public static string CreateAppsFolderLocator(string appUserModelId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(appUserModelId);
+        const string appsFolderPrefix = @"shell:AppsFolder\";
+        var normalized = appUserModelId.Trim();
+        return normalized.StartsWith(appsFolderPrefix, StringComparison.OrdinalIgnoreCase)
+            ? normalized
+            : $"{appsFolderPrefix}{normalized}";
     }
 }

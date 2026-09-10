@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace Workspace.Host.Applications;
 
 public sealed class ApplicationLauncher(IProcessLauncher processLauncher)
@@ -6,9 +8,8 @@ public sealed class ApplicationLauncher(IProcessLauncher processLauncher)
         ApplicationDescriptor application,
         CancellationToken cancellationToken)
     {
-        var arguments = string.IsNullOrWhiteSpace(application.Arguments)
-            ? Array.Empty<string>()
-            : [application.Arguments];
+        ArgumentNullException.ThrowIfNull(application);
+        var arguments = SplitLegacyArguments(application.Arguments);
         return await LaunchAsync(application, arguments, null, cancellationToken);
     }
 
@@ -30,5 +31,67 @@ public sealed class ApplicationLauncher(IProcessLauncher processLauncher)
             cancellationToken);
 
         return new ApplicationLaunchResult(application.Id, processId);
+    }
+
+    private static IReadOnlyList<string> SplitLegacyArguments(string? commandLine)
+    {
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            return Array.Empty<string>();
+        }
+
+        var arguments = new List<string>();
+        var argument = new StringBuilder();
+        var inQuotes = false;
+        var backslashCount = 0;
+
+        void AddArgument()
+        {
+            if (argument.Length > 0)
+            {
+                arguments.Add(argument.ToString());
+                argument.Clear();
+            }
+        }
+
+        foreach (var character in commandLine)
+        {
+            if (character == '\\')
+            {
+                backslashCount++;
+                continue;
+            }
+
+            if (character == '"')
+            {
+                argument.Append('\\', backslashCount / 2);
+                if (backslashCount % 2 == 1)
+                {
+                    argument.Append('"');
+                }
+                else
+                {
+                    inQuotes = !inQuotes;
+                }
+
+                backslashCount = 0;
+                continue;
+            }
+
+            argument.Append('\\', backslashCount);
+            backslashCount = 0;
+            if (char.IsWhiteSpace(character) && !inQuotes)
+            {
+                AddArgument();
+            }
+            else
+            {
+                argument.Append(character);
+            }
+        }
+
+        argument.Append('\\', backslashCount);
+        AddArgument();
+        return arguments;
     }
 }

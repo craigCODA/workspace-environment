@@ -15,11 +15,19 @@ public sealed record ApplicationStartRequest(
 
 public sealed class SystemProcessLauncher : IProcessLauncher
 {
+    private readonly Func<ProcessStartInfo, int?> _startProcess;
+
+    public SystemProcessLauncher(Func<ProcessStartInfo, int?>? startProcess = null)
+    {
+        _startProcess = startProcess ?? StartProcess;
+    }
+
     public Task<int?> LaunchAsync(ApplicationStartRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Locator);
+        ArgumentNullException.ThrowIfNull(request.Arguments);
 
         var startInfo = new ProcessStartInfo
         {
@@ -35,7 +43,8 @@ public sealed class SystemProcessLauncher : IProcessLauncher
             startInfo.ArgumentList.Add(argument);
         }
 
-        var process = Process.Start(startInfo);
-        return Task.FromResult<int?>(process?.Id);
+        return Task.FromResult(_startProcess(startInfo));
     }
+
+    private static int? StartProcess(ProcessStartInfo startInfo) => Process.Start(startInfo)?.Id;
 }

@@ -1,4 +1,5 @@
 using Workspace.Host.Applications;
+using System.Diagnostics;
 
 namespace Workspace.Host.Tests;
 
@@ -111,6 +112,59 @@ public sealed class ApplicationLifecycleTests
 
         Assert.Equal(["new-tab", "codex"], process.Request!.Arguments);
         Assert.Equal(@"D:\PythOS-Workspace", process.Request.WorkingDirectory);
+    }
+
+    [Fact]
+    public async Task Launcher_parses_legacy_quoted_arguments_into_structured_tokens()
+    {
+        var process = new RecordingProcessLauncher(8100);
+        var application = new ApplicationDescriptor(
+            "app:terminal",
+            "Terminal",
+            @"C:\wt.exe",
+            "new-tab --title \"Codex Workspace\"");
+
+        await new ApplicationLauncher(process).LaunchAsync(application, CancellationToken.None);
+
+        Assert.Equal(["new-tab", "--title", "Codex Workspace"], process.Request!.Arguments);
+    }
+
+    [Fact]
+    public async Task Launcher_validates_a_legacy_descriptor_before_reading_its_arguments()
+    {
+        var launcher = new ApplicationLauncher(new RecordingProcessLauncher(8100));
+
+        await Assert.ThrowsAsync<ArgumentNullException>(() => launcher.LaunchAsync(null!, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(ApplicationLaunchKind.Executable, false)]
+    [InlineData(ApplicationLaunchKind.Shortcut, true)]
+    [InlineData(ApplicationLaunchKind.Packaged, true)]
+    public async Task System_launcher_uses_the_correct_start_strategy_for_each_application_kind(
+        ApplicationLaunchKind launchKind,
+        bool expectedUseShellExecute)
+    {
+        ProcessStartInfo? captured = null;
+        var launcher = new SystemProcessLauncher(startInfo =>
+        {
+            captured = startInfo;
+            return null;
+        });
+        var locator = launchKind == ApplicationLaunchKind.Packaged
+            ? WindowsApplicationCatalog.CreateAppsFolderLocator("Contoso.Sample_123!App")
+            : @"C:\Tools\sample.exe";
+
+        var processId = await launcher.LaunchAsync(
+            new ApplicationStartRequest(launchKind, locator, ["--profile", "Codex Workspace"], @"D:\PythOS-Workspace"),
+            CancellationToken.None);
+
+        Assert.NotNull(captured);
+        Assert.Equal(expectedUseShellExecute, captured.UseShellExecute);
+        Assert.Equal(locator, captured.FileName);
+        Assert.Equal(["--profile", "Codex Workspace"], captured.ArgumentList);
+        Assert.Equal(@"D:\PythOS-Workspace", captured.WorkingDirectory);
+        Assert.Null(processId);
     }
 
     [Fact]

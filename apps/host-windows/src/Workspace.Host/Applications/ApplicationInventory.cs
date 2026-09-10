@@ -12,32 +12,34 @@ public static class ApplicationInventory
     {
         ArgumentNullException.ThrowIfNull(applications);
 
-        var merged = new Dictionary<(ApplicationLaunchKind LaunchKind, string Locator), ApplicationDescriptor>();
-        var aliases = new Dictionary<(ApplicationLaunchKind LaunchKind, string Locator), HashSet<string>>();
-
-        foreach (var application in applications)
+        return applications
+            .GroupBy(application => (application.LaunchKind, NormalizeLocator(application.Locator)))
+            .Select(group =>
         {
-            var key = (application.LaunchKind, application.Locator.ToUpperInvariant());
-            if (!merged.TryAdd(key, application))
-            {
-                aliases[key].UnionWith(application.Aliases.Where(alias => !string.IsNullOrWhiteSpace(alias)));
-                continue;
-            }
+            var canonical = group
+                .OrderBy(application => application.Id, StringComparer.Ordinal)
+                .ThenBy(application => application.DisplayName, StringComparer.Ordinal)
+                .ThenBy(application => application.Locator, StringComparer.Ordinal)
+                .First();
+            var aliases = group
+                .SelectMany(application => application.Aliases)
+                .Where(alias => !string.IsNullOrWhiteSpace(alias))
+                .GroupBy(alias => alias, StringComparer.OrdinalIgnoreCase)
+                .Select(aliases => aliases.OrderBy(alias => alias, StringComparer.Ordinal).First())
+                .OrderBy(alias => alias, StringComparer.Ordinal)
+                .ToArray();
 
-            aliases[key] = new HashSet<string>(
-                application.Aliases.Where(alias => !string.IsNullOrWhiteSpace(alias)),
-                StringComparer.OrdinalIgnoreCase);
-        }
-
-        return merged.Select(pair =>
-        {
-            var application = pair.Value;
-            return application with
+            return canonical with
             {
-                Aliases = aliases[pair.Key]
-                    .OrderBy(alias => alias, StringComparer.OrdinalIgnoreCase)
-                    .ToArray(),
+                Aliases = aliases,
             };
-        }).ToArray();
+        })
+        .OrderBy(application => application.Id, StringComparer.Ordinal)
+        .ThenBy(application => application.DisplayName, StringComparer.Ordinal)
+        .ThenBy(application => application.Locator, StringComparer.Ordinal)
+        .ToArray();
     }
+
+    private static string NormalizeLocator(string locator) =>
+        locator.Replace('/', '\\').ToUpperInvariant();
 }
