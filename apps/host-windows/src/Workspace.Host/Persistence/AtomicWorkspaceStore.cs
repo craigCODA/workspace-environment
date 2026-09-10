@@ -1,4 +1,7 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
+
+[assembly: InternalsVisibleTo("Workspace.Host.Tests")]
 
 namespace Workspace.Host.Persistence;
 
@@ -10,11 +13,20 @@ public sealed class AtomicWorkspaceStore : IWorkspaceStore
     };
 
     private readonly string _path;
+    private readonly Func<string, CancellationToken, Task>? _beforeTemporaryFileWriteAsync;
 
     public AtomicWorkspaceStore(string path)
+        : this(path, null)
+    {
+    }
+
+    internal AtomicWorkspaceStore(
+        string path,
+        Func<string, CancellationToken, Task>? beforeTemporaryFileWriteAsync)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         _path = Path.GetFullPath(path);
+        _beforeTemporaryFileWriteAsync = beforeTemporaryFileWriteAsync;
     }
 
     public async Task<WorkspaceDocument> LoadAsync(CancellationToken cancellationToken)
@@ -65,6 +77,10 @@ public sealed class AtomicWorkspaceStore : IWorkspaceStore
                 4096,
                 FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
+                if (_beforeTemporaryFileWriteAsync is not null)
+                {
+                    await _beforeTemporaryFileWriteAsync(tempPath, cancellationToken);
+                }
                 await JsonSerializer.SerializeAsync(stream, document, JsonOptions, cancellationToken);
                 await stream.FlushAsync(cancellationToken);
                 stream.Flush(flushToDisk: true);

@@ -199,6 +199,66 @@ public sealed class PersistenceTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureCurrent_atomic_publication_failure_after_temp_creation_preserves_file_and_cleans_up()
+    {
+        var statePath = Path.Combine(_tempDir, "migration-failure.json");
+        var original = LegacyWindowDocument();
+        await new AtomicWorkspaceStore(statePath).SaveAsync(original, CancellationToken.None);
+        var originalBytes = await File.ReadAllBytesAsync(statePath);
+        var temporaryFileCreated = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowFailure = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new AtomicWorkspaceStore(
+            statePath,
+            async (temporaryPath, _) =>
+            {
+                temporaryFileCreated.TrySetResult(temporaryPath);
+                await allowFailure.Task;
+                throw new IOException("Injected publication failure.");
+            });
+
+        var migrationTask = WorkspaceMigrator.EnsureCurrentAsync(store, CancellationToken.None);
+        var temporaryPath = await temporaryFileCreated.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(File.Exists(temporaryPath));
+        allowFailure.SetResult();
+
+        await Assert.ThrowsAsync<IOException>(() => migrationTask);
+        Assert.Equal(originalBytes, await File.ReadAllBytesAsync(statePath));
+        Assert.False(File.Exists(temporaryPath));
+        Assert.Empty(Directory.EnumerateFiles(_tempDir, "migration-failure.json.*.tmp"));
+    }
+
+    [Fact]
+    public async Task EnsureCurrent_atomic_publication_cancellation_after_temp_creation_preserves_file_and_cleans_up()
+    {
+        var statePath = Path.Combine(_tempDir, "migration-cancellation.json");
+        var original = LegacyWindowDocument();
+        await new AtomicWorkspaceStore(statePath).SaveAsync(original, CancellationToken.None);
+        var originalBytes = await File.ReadAllBytesAsync(statePath);
+        var temporaryFileCreated = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource();
+        var store = new AtomicWorkspaceStore(
+            statePath,
+            async (temporaryPath, cancellationToken) =>
+            {
+                temporaryFileCreated.TrySetResult(temporaryPath);
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            });
+
+        var migrationTask = WorkspaceMigrator.EnsureCurrentAsync(store, cancellation.Token);
+        var temporaryPath = await temporaryFileCreated.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(File.Exists(temporaryPath));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => migrationTask);
+        Assert.Equal(originalBytes, await File.ReadAllBytesAsync(statePath));
+        Assert.False(File.Exists(temporaryPath));
+        Assert.Empty(Directory.EnumerateFiles(_tempDir, "migration-cancellation.json.*.tmp"));
+    }
+
+    [Fact]
     public void Bind_window_replaces_only_the_display_relationship()
     {
         var first = WorkspaceEntity.CreateWindow("pc.window:first", "First", "pc.application:first");
