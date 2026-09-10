@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { PresentationState, WorkspaceEntity } from '@workspace/world-schema';
+import { type PresentationState, type WorkspaceEntity } from '@workspace/world-schema';
 import { RendererRegistry } from './RendererRegistry.ts';
 import type { CameraPose } from '../navigation/CameraNavigator.ts';
 import type { SceneSnapshot } from '../navigation/SceneCommandController.ts';
@@ -425,6 +425,7 @@ export class WorkspaceScene {
         textureTarget,
         {
           inputSink: binding.inputWindowId ? this.#inputSinkFactory?.(binding.inputWindowId) : undefined,
+          boundWindowId: windowId,
           initialPresentation: entity.presentation,
           presentationSink: this.#presentationSinkFactory?.(binding.presentationSurfaceId),
         },

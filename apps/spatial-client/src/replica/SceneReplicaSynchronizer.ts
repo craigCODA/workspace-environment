@@ -25,7 +25,16 @@ export class SceneReplicaSynchronizer {
 
     this.#replica.apply(envelope);
     const entities = this.#replica.entities;
-    const currentIds = new Set(entities.map((entity) => entity.id));
+    const displayedWindowIds = new Set(
+      entities
+        .filter((entity) => entity.kind === 'spatial.surface')
+        .flatMap((entity) => entity.relationships)
+        .filter((relationship) => relationship.type === 'displays')
+        .map((relationship) => relationship.targetId),
+    );
+    const renderableEntities = entities.filter((entity) =>
+      entity.kind !== 'pc.window' || !displayedWindowIds.has(entity.id));
+    const currentIds = new Set(renderableEntities.map((entity) => entity.id));
 
     for (const entityId of this.#renderedIds) {
       if (currentIds.has(entityId)) continue;
@@ -33,7 +42,7 @@ export class SceneReplicaSynchronizer {
       this.#renderedIds.delete(entityId);
     }
 
-    for (const entity of entities) {
+    for (const entity of renderableEntities) {
       this.#scene.upsert(entity);
       this.#renderedIds.add(entity.id);
     }

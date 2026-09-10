@@ -41,6 +41,8 @@ export type ApplicationSurfaceOptions = {
   inputSink?: WindowInputSink;
   initialPresentation?: PresentationState;
   presentationSink?: PresentationSink;
+  /** A null value represents a durable, selectable display surface with no window bound. */
+  boundWindowId?: string | null;
 };
 
 export class ThreeSurfaceTextureTarget implements SurfaceTextureTarget {
@@ -118,6 +120,7 @@ export class ApplicationSurface {
   readonly #retryIntervalMs: number;
   readonly #inputSink: WindowInputSink | null;
   readonly #presentationSink: PresentationSink | null;
+  readonly #boundWindowId: string | null;
   #presentation: PresentationState | null;
   #displayedPresentation: PresentationState | null;
   #pendingPresentationCount = 0;
@@ -137,6 +140,7 @@ export class ApplicationSurface {
     this.#retryIntervalMs = options.retryIntervalMs ?? 1_000;
     this.#inputSink = options.inputSink ?? null;
     this.#presentationSink = options.presentationSink ?? null;
+    this.#boundWindowId = options.boundWindowId === undefined ? 'bound' : options.boundWindowId;
     this.#presentation = options.initialPresentation ?? null;
     this.#displayedPresentation = this.#presentation;
     if (this.#displayedPresentation) {
@@ -156,8 +160,12 @@ export class ApplicationSurface {
     return this.#displayedPresentation;
   }
 
+  get isBound(): boolean {
+    return this.#boundWindowId !== null;
+  }
+
   async renderNextFrame(): Promise<boolean> {
-    if (this.#disposed) return false;
+    if (this.#disposed || !this.isBound) return false;
     if (!this.#opened) {
       await this.#stream.open();
       this.#opened = true;
@@ -170,7 +178,7 @@ export class ApplicationSurface {
   }
 
   start(): void {
-    if (this.#disposed || this.#timer) return;
+    if (this.#disposed || this.#timer || !this.isBound) return;
 
     const poll = async (): Promise<void> => {
       try {
@@ -202,18 +210,22 @@ export class ApplicationSurface {
     v: number,
     button?: PointerButton,
   ): Promise<unknown> {
+    if (!this.isBound) return Promise.resolve();
     return this.#requireInput().pointer(phase, u, v, button);
   }
 
   wheel(u: number, v: number, deltaX: number, deltaY: number): Promise<unknown> {
+    if (!this.isBound) return Promise.resolve();
     return this.#requireInput().wheel(u, v, deltaX, deltaY);
   }
 
   key(phase: KeyPhase, key: string): Promise<unknown> {
+    if (!this.isBound) return Promise.resolve();
     return this.#requireInput().key(phase, key);
   }
 
   text(value: string): Promise<unknown> {
+    if (!this.isBound) return Promise.resolve();
     return this.#requireInput().text(value);
   }
 
@@ -258,7 +270,7 @@ export class ApplicationSurface {
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = null;
     try {
-      await this.#stream.close();
+      if (this.isBound) await this.#stream.close();
     } finally {
       this.#textureTarget.dispose();
     }

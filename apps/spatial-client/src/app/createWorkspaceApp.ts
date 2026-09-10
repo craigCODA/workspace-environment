@@ -10,6 +10,7 @@ import {
 } from '../onboarding/CodaPresence.ts';
 import { CameraNavigator } from '../navigation/CameraNavigator.ts';
 import { SceneCommandController } from '../navigation/SceneCommandController.ts';
+import { WorkspaceCommandController } from '../navigation/WorkspaceCommandController.ts';
 import {
   WorkspaceNativeBridge,
   type WorkspaceNativeEnvelope,
@@ -102,6 +103,15 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     onAgentInstruction: (text) => bridge.post('agent.instruction', { text }),
   });
   let selectedEntityId: string | null = null;
+  const workspaceCommands = new WorkspaceCommandController(socket, () => selectedEntityId, {
+    surfaceIds: () => replica.entities
+      .filter((entity) => entity.kind === 'spatial.surface')
+      .map((entity) => entity.id),
+    cameraPose: () => scene.getCameraPose(),
+    occupiedPresentations: () => replica.entities
+      .filter((entity) => entity.kind === 'spatial.surface')
+      .map((entity) => entity.presentation),
+  });
   const navigator = new CameraNavigator(scene);
   const sceneCommands = new SceneCommandController(
     scene,
@@ -172,6 +182,11 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     bridge.subscribe('scene.command', (message) => {
       void sceneCommands.handle(message.payload).then((result) => {
         bridge.post('scene.command.result', result);
+      });
+    }),
+    bridge.subscribe('workspace.command', (message) => {
+      void workspaceCommands.handle(message.payload).then((result) => {
+        bridge.post('workspace.command.result', result);
       });
     }),
   ];
@@ -262,6 +277,10 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       selectedSurface = hit.surface;
       selectedEntityId = hit.entityId;
       root.classList.add('has-selected-surface');
+      if (!hit.surface.isBound) {
+        event.preventDefault();
+        return;
+      }
       surfacePointer = {
         pointerId: event.pointerId,
         surface: hit.surface,
@@ -374,7 +393,9 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     selectedEntityId = hit.entityId;
     root.classList.add('has-selected-surface');
     event.preventDefault();
-    void hit.surface.wheel(hit.u, hit.v, event.deltaX, event.deltaY).catch(reportInputError);
+    if (hit.surface.isBound) {
+      void hit.surface.wheel(hit.u, hit.v, event.deltaX, event.deltaY).catch(reportInputError);
+    }
   };
 
   const onContextMenu = (event: MouseEvent): void => {

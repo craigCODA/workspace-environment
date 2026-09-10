@@ -387,3 +387,39 @@ test('application surface recovers when a semantic window becomes capturable lat
 
   assert.equal(openAttempts, 2);
 });
+
+test('a blank display surface remains selectable without opening capture or input', async () => {
+  let opened = 0;
+  let inputCalls = 0;
+  const surface = new ApplicationSurface({
+    async open() { opened += 1; },
+    async readFrame() { return null; },
+    async close() {},
+  }, {
+    update() {},
+    markUnavailable() {},
+    dispose() {},
+  }, {
+    inputSink: {
+      async pointer() { inputCalls += 1; },
+      async wheel() { inputCalls += 1; },
+      async key() { inputCalls += 1; },
+      async text() { inputCalls += 1; },
+    },
+    boundWindowId: null,
+    initialPresentation: {
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { x: 0, y: 0, z: 0, w: 1 },
+      size: { x: 1, y: 1, z: 1 },
+    },
+  });
+
+  surface.start();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await surface.pointer('down', 0.5, 0.5, 'primary');
+
+  assert.equal(surface.isBound, false);
+  assert.equal(opened, 0);
+  assert.equal(inputCalls, 0);
+  await surface.dispose();
+});

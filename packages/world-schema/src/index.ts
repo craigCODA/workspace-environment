@@ -47,6 +47,13 @@ export const DEFAULT_PRESENTATION: PresentationState = {
   size: { x: 1, y: 1, z: 1 },
 };
 
+/** Returns the window whose pixels and input a rendered entity represents. */
+export function displayedWindowId(entity: WorkspaceEntity): string | null {
+  if (entity.kind === 'pc.window') return entity.id;
+  if (entity.kind !== 'spatial.surface') return null;
+  return entity.relationships.find((edge) => edge.type === 'displays')?.targetId ?? null;
+}
+
 export function createEntityId(kind: string, stableKey: string): string {
   const normalizedKind = normalizeSegment(kind);
   const normalizedKey = stableKey.normalize('NFKC').trim().toLocaleLowerCase('en-US');
