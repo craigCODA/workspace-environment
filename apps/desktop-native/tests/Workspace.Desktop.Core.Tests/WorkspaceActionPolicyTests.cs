@@ -20,7 +20,7 @@ public sealed class WorkspaceActionPolicyTests
     {
         var action = new WorkspaceDirective("application.open", JsonSerializer.SerializeToElement(new
         {
-            applicationId = "app:notepad",
+            applicationId = "pc.application:notepad",
             targetSurfaceId = "spatial.surface:west",
             replaceOccupied = true,
         }));
@@ -32,11 +32,28 @@ public sealed class WorkspaceActionPolicyTests
     public void Remembered_launch_scope_is_specific_to_one_application()
     {
         var first = WorkspaceActionPolicy.ScopeFor(new WorkspaceDirective("application.open",
-            JsonSerializer.SerializeToElement(new { applicationId = "app:notepad" })));
+            JsonSerializer.SerializeToElement(new { applicationId = "pc.application:notepad" })), "workspace:one");
         var second = WorkspaceActionPolicy.ScopeFor(new WorkspaceDirective("application.open",
-            JsonSerializer.SerializeToElement(new { applicationId = "app:terminal" })));
+            JsonSerializer.SerializeToElement(new { applicationId = "pc.application:terminal" })), "workspace:two");
 
-        Assert.Equal("application:app:notepad", first);
+        Assert.Equal("workspace:one|application:pc.application:notepad", first);
         Assert.NotEqual(first, second);
+    }
+
+    [Fact]
+    public void Replacement_has_a_separate_fresh_requirement_after_the_launch_requirement()
+    {
+        var action = new WorkspaceDirective("application.open", JsonSerializer.SerializeToElement(new
+        {
+            applicationId = "pc.application:notepad",
+            targetSurfaceId = "spatial.surface:west",
+            replaceOccupied = true,
+        }));
+
+        var requirements = WorkspaceActionPolicy.Requirements(action);
+
+        Assert.Collection(requirements,
+            launch => Assert.Equal(new WorkspaceActionPolicyDecision("application.launch", WorkspaceConfirmation.Rememberable), launch),
+            replace => Assert.Equal(new WorkspaceActionPolicyDecision("surface.replace", WorkspaceConfirmation.Fresh), replace));
     }
 }

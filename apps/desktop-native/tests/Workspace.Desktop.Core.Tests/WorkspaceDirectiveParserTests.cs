@@ -15,6 +15,49 @@ public sealed class WorkspaceDirectiveParserTests
         Assert.Equal("application.open", Assert.Single(result.Directives).Command);
     }
 
+    [Fact]
+    public void Accepts_host_application_identity_and_rejects_unrelated_entity_kinds()
+    {
+        var accepted = WorkspaceDirectiveParser.Parse(
+            "Opening it. [[workspace:{\"command\":\"application.open\",\"args\":{\"applicationId\":\"pc.application:notepad\"}}]]");
+        var rejected = WorkspaceDirectiveParser.Parse(
+            "No. [[workspace:{\"command\":\"application.open\",\"args\":{\"applicationId\":\"app:notepad\"}}]]");
+
+        Assert.Equal("pc.application:notepad", Assert.Single(accepted.Directives).Arguments.GetProperty("applicationId").GetString());
+        Assert.Empty(rejected.Directives);
+    }
+
+    [Fact]
+    public void Removes_unterminated_private_markup_and_handles_marker_text_inside_json_strings()
+    {
+        var embeddedMarker = WorkspaceDirectiveParser.Parse(
+            "Before [[workspace:{\"command\":\"application.search\",\"args\":{\"query\":\"Note ]] pad\"}}]] after");
+        var unterminated = WorkspaceDirectiveParser.Parse(
+            "Before [[workspace:{\"command\":\"application.search\",\"args\":{\"query\":\"secret\"}}");
+
+        Assert.Equal("Before after", embeddedMarker.SpokenText);
+        Assert.Equal("Before", unterminated.SpokenText);
+        Assert.Equal("Note ]] pad", Assert.Single(embeddedMarker.Directives).Arguments.GetProperty("query").GetString());
+    }
+
+    [Fact]
+    public void Rejects_incomplete_nested_presentations()
+    {
+        var result = WorkspaceDirectiveParser.Parse(
+            "No. [[workspace:{\"command\":\"application.open\",\"args\":{\"applicationId\":\"pc.application:notepad\",\"presentation\":{\"position\":{\"x\":0,\"y\":0,\"z\":0},\"rotation\":{\"x\":0,\"y\":0,\"z\":0,\"w\":1},\"size\":{\"x\":1,\"y\":1,\"z\":1},\"unexpected\":true}}]]");
+
+        Assert.Empty(result.Directives);
+    }
+
+    [Fact]
+    public void Profile_save_requires_its_structured_launch_policy()
+    {
+        var result = WorkspaceDirectiveParser.Parse(
+            "No. [[workspace:{\"command\":\"application.profile.save\",\"args\":{\"id\":\"profile:notepad\",\"displayName\":\"Notepad\",\"applicationId\":\"pc.application:notepad\",\"arguments\":[]}}]]");
+
+        Assert.Empty(result.Directives);
+    }
+
     [Theory]
     [InlineData("shell.run")]
     [InlineData("application.launch")]
@@ -66,7 +109,7 @@ public sealed class WorkspaceDirectiveParserTests
     [Theory]
     [InlineData("application.close", "{\"windowEntityId\":\"not-a-window\"}")]
     [InlineData("surface.bindWindow", "{\"surfaceEntityId\":\"pc.window:x\",\"windowEntityId\":\"spatial.surface:y\"}")]
-    [InlineData("application.open", "{\"applicationId\":\"app:notepad\",\"profileId\":\"profile:notepad\"}")]
+    [InlineData("application.open", "{\"applicationId\":\"pc.application:notepad\",\"profileId\":\"profile:notepad\"}")]
     public void Rejects_invalid_operation_specific_ids(string command, string args)
     {
         var result = WorkspaceDirectiveParser.Parse(

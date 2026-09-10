@@ -25,35 +25,54 @@ public static class WorkspaceActionPolicy
         _ => throw new ArgumentException("Unsupported workspace action.", nameof(command)),
     };
 
-    public static WorkspaceActionPolicyDecision Classify(WorkspaceDirective directive)
-    {
-        var policy = Classify(directive.Command);
-        return IsOccupiedReplacement(directive)
+    public static WorkspaceActionPolicyDecision Classify(WorkspaceDirective directive) =>
+        IsOccupiedReplacement(directive)
             ? new WorkspaceActionPolicyDecision("surface.replace", WorkspaceConfirmation.Fresh)
-            : policy;
+            : Classify(directive.Command);
+
+    public static IReadOnlyList<WorkspaceActionPolicyDecision> Requirements(WorkspaceDirective directive)
+    {
+        var primary = Classify(directive.Command);
+        return IsOccupiedReplacement(directive)
+            ? [primary, new WorkspaceActionPolicyDecision("surface.replace", WorkspaceConfirmation.Fresh)]
+            : [primary];
     }
 
-    public static string ScopeFor(WorkspaceDirective directive)
+    public static string ScopeFor(WorkspaceDirective directive, string workspaceIdentity) =>
+        ScopeFor(directive, workspaceIdentity, Classify(directive.Command));
+
+    public static string ScopeFor(
+        WorkspaceDirective directive,
+        string workspaceIdentity,
+        WorkspaceActionPolicyDecision policy)
     {
-        var args = directive.Arguments;
-        return directive.Command switch
+        ArgumentException.ThrowIfNullOrWhiteSpace(workspaceIdentity);
+        var semantic = policy.Capability switch
         {
-            "application.open" => Prefix("application", FirstText(args, "applicationId", "profileId")),
-            "window.focus" or "application.close" or "application.restart" => Prefix("window", FirstText(args, "windowEntityId", "profileId")),
-            "surface.bindWindow" => Prefix("surface", FirstText(args, "surfaceEntityId")),
-            "application.profile.save" => Prefix("profile", FirstText(args, "id")),
-            "application.profile.delete" => Prefix("profile", FirstText(args, "profileId")),
+            "application.launch" => FirstText(directive.Arguments, "applicationId", "profileId"),
+            "window.focus" => FirstText(directive.Arguments, "applicationId"),
+            "surface.bind" or "surface.replace" => FirstText(directive.Arguments, "surfaceEntityId", "targetSurfaceId"),
+            "application.profile.edit" => FirstText(directive.Arguments, "id", "profileId"),
+            "application.close" or "application.restart" => FirstText(directive.Arguments, "windowEntityId", "profileId"),
+            _ => null,
+        };
+        var kind = policy.Capability switch
+        {
+            "application.launch" or "window.focus" => "application",
+            "application.profile.edit" => "profile",
+            "surface.bind" or "surface.replace" => "surface",
+            "application.close" or "application.restart" => "window",
             _ => "workspace",
         };
+        return string.IsNullOrWhiteSpace(semantic)
+            ? $"{workspaceIdentity}|{kind}"
+            : $"{workspaceIdentity}|{kind}:{semantic}";
     }
 
     private static bool IsOccupiedReplacement(WorkspaceDirective directive) =>
         (directive.Command is "application.open" or "surface.bindWindow")
         && directive.Arguments.TryGetProperty("replaceOccupied", out var replace)
         && replace.ValueKind == JsonValueKind.True;
-
-    private static string Prefix(string prefix, string? value) =>
-        string.IsNullOrWhiteSpace(value) ? "workspace" : $"{prefix}:{value}";
 
     private static string? FirstText(JsonElement value, params string[] names) =>
         names.Select(name => value.TryGetProperty(name, out var property)
