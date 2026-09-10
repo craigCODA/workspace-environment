@@ -214,6 +214,12 @@ button {
   user-select: text;
 }
 
+.coda-transcript[hidden],
+.coda-terminal[hidden],
+.coda-chat[hidden] {
+  display: none;
+}
+
 .coda-transcript {
   bottom: 7.5rem;
   padding: 0.75rem 0.9rem;
