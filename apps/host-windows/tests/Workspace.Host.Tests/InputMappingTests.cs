@@ -113,6 +113,21 @@ public sealed class InputMappingTests
         Assert.Equal((nint)777, focused);
     }
 
+    [Fact]
+    public async Task FocusServiceResolvesTheExactPersistedHwndSpecificWindowIdentity()
+    {
+        var first = new WindowSnapshot((nint)777, 42, "First", new WindowBounds(0, 0, 800, 600), true, false, "pc.application:test");
+        var second = new WindowSnapshot((nint)778, 43, "Second", new WindowBounds(0, 0, 800, 600), true, false, "pc.application:test");
+        await using var reconciler = new WindowReconciler();
+        nint focused = nint.Zero;
+        var service = new Win32WindowFocusService(new StaticWindowCatalog(first, second), reconciler,
+            hwnd => { focused = hwnd; return true; });
+
+        await service.FocusAsync("pc.window:pc.application:test:30A", CancellationToken.None);
+
+        Assert.Equal((nint)778, focused);
+    }
+
     private sealed class StaticWindowCatalog(params WindowSnapshot[] windows) : IWindowCatalog
     {
         public Task<IReadOnlyList<WindowSnapshot>> ListAsync(CancellationToken cancellationToken) =>

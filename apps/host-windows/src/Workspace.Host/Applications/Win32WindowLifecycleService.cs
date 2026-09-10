@@ -41,8 +41,28 @@ public sealed class Win32WindowLifecycleService(
         {
             var entity = (await workspaceStore.LoadAsync(cancellationToken)).Entities.FirstOrDefault(candidate =>
                 string.Equals(candidate.Id, windowEntityId, StringComparison.Ordinal));
-            if (entity is null || !TryParseHwnd(entity.HostBinding?.Locator, out var hwnd)) return null;
-            return (await windowCatalog.ListAsync(cancellationToken)).Any(window => window.Hwnd == hwnd) ? hwnd : null;
+            if (entity is null) return null;
+            var applicationId = entity.Properties.TryGetValue("applicationId", out var applicationProperty)
+                ? applicationProperty.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(applicationId)) return null;
+            var windows = await windowCatalog.ListAsync(cancellationToken);
+            if (TryParseHwnd(entity.HostBinding?.Locator, out var hwnd))
+            {
+                return windows.Any(window => window.Hwnd == hwnd
+                    && string.Equals(window.ApplicationId, applicationId, StringComparison.OrdinalIgnoreCase))
+                    ? hwnd
+                    : null;
+            }
+
+            if (entity.HostBinding?.Locator.EndsWith(":main", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                var compatible = windows.Where(window => window.Hwnd != nint.Zero
+                    && window.IsVisible
+                    && string.Equals(window.ApplicationId, applicationId, StringComparison.OrdinalIgnoreCase)).ToArray();
+                return compatible.Length == 1 ? compatible[0].Hwnd : null;
+            }
+            return null;
         }
 
         var candidates = (await windowCatalog.ListAsync(cancellationToken)).Where(window =>

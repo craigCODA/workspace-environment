@@ -93,6 +93,20 @@ public sealed class ApplicationControlTests
     }
 
     [Fact]
+    public async Task Open_idempotently_reuses_the_window_already_displayed_by_the_target_surface()
+    {
+        var fixture = ApplicationControlFixture.WithSurfaceBoundToVisibleWindow();
+
+        var result = await fixture.Service.OpenAsync(new ApplicationOpenRequest(
+            "op-idempotent", "app:notepad", null, ApplicationLaunchPolicy.ReuseOrLaunch,
+            "spatial.surface:right", null), CancellationToken.None);
+
+        Assert.Equal(ApplicationOpenDisposition.Reused, result.Disposition);
+        Assert.Equal("pc.window:notepad", result.WindowEntityId);
+        Assert.Equal(0, fixture.ProcessLauncher.LaunchCount);
+    }
+
+    [Fact]
     public async Task Open_rejects_an_occupied_surface_before_attempting_a_new_instance_launch()
     {
         var fixture = ApplicationControlFixture.WithOccupiedSurface();
@@ -186,6 +200,19 @@ public sealed class ApplicationControlTests
     }
 
     [Fact]
+    public async Task Open_accepts_a_descendant_process_window_when_the_process_tree_confirms_it()
+    {
+        var fixture = ApplicationControlFixture.WithLaunchedDescendantWindow();
+
+        var result = await fixture.Service.OpenAsync(new ApplicationOpenRequest(
+            "op-descendant", "app:notepad", null, ApplicationLaunchPolicy.NewInstance, null, null),
+            CancellationToken.None);
+
+        Assert.Equal(ApplicationOpenDisposition.Launched, result.Disposition);
+        Assert.Equal(8800, result.ProcessId);
+    }
+
+    [Fact]
     public async Task Win32_close_targets_the_exact_persisted_window_hwnd()
     {
         var target = new WindowSnapshot((nint)0x2a, 4200, "Target", new WindowBounds(0, 0, 10, 10), true, false, "app:notepad");
@@ -209,6 +236,43 @@ public sealed class ApplicationControlTests
 
         Assert.Equal(WindowCloseState.ClosePending, state);
         Assert.Equal([(nint)0x2a], sent);
+    }
+
+    [Fact]
+    public async Task Win32_close_resolves_a_legacy_main_binding_only_when_one_compatible_window_is_live()
+    {
+        var target = new WindowSnapshot((nint)0x2a, 4200, "Target", new WindowBounds(0, 0, 10, 10), true, false, "app:notepad");
+        var document = new WorkspaceDocument(2,
+        [
+            WorkspaceEntity.CreateWindow("pc.window:notepad", "Target", "app:notepad"),
+        ]);
+        var sent = new List<nint>();
+        var lifecycle = new Win32WindowLifecycleService(new FixedWindowCatalog([target]),
+            new InMemoryWorkspaceStore(document), hwnd => { sent.Add(hwnd); return true; });
+
+        var state = await lifecycle.RequestCloseAsync("pc.window:notepad", TimeSpan.FromMilliseconds(1), CancellationToken.None);
+
+        Assert.Equal(WindowCloseState.ClosePending, state);
+        Assert.Equal([(nint)0x2a], sent);
+    }
+
+    [Fact]
+    public async Task Win32_close_refuses_a_reused_hwnd_with_a_different_application_identity()
+    {
+        var reused = new WindowSnapshot((nint)0x2a, 4200, "Other", new WindowBounds(0, 0, 10, 10), true, false, "app:other");
+        var document = new WorkspaceDocument(2,
+        [
+            WorkspaceEntity.CreateWindow("pc.window:notepad", "Target", "app:notepad") with
+            { HostBinding = new HostBinding("window", "hwnd:2A") },
+        ]);
+        var sent = new List<nint>();
+        var lifecycle = new Win32WindowLifecycleService(new FixedWindowCatalog([reused]),
+            new InMemoryWorkspaceStore(document), hwnd => { sent.Add(hwnd); return true; });
+
+        var state = await lifecycle.RequestCloseAsync("pc.window:notepad", TimeSpan.FromMilliseconds(1), CancellationToken.None);
+
+        Assert.Equal(WindowCloseState.NotRunning, state);
+        Assert.Empty(sent);
     }
 
     private sealed class ApplicationControlFixture
@@ -259,6 +323,20 @@ public sealed class ApplicationControlTests
             null,
             occupied: true);
 
+        public static ApplicationControlFixture WithSurfaceBoundToVisibleWindow() => Create(
+            "app:notepad", "pc.window:notepad", "spatial.surface:right", null,
+            occupied: true, occupiedWindowId: "pc.window:notepad");
+
+        public static ApplicationControlFixture WithLaunchedDescendantWindow() => Create(
+            "app:notepad", "pc.window:notepad", "spatial.surface:right", null,
+            windowCatalog: new SequencedWindowCatalog(
+            [
+                [],
+                [],
+                [new WindowSnapshot((nint)99, 9900, "Notepad", new WindowBounds(1, 2, 640, 480), true, false, "app:notepad")],
+            ]),
+            processTree: new DescendantProcessTree(9900, 8800));
+
         public static ApplicationControlFixture WithVisibleWindowAndLaunchPid(int? processId) => Create(
             "app:notepad", "pc.window:notepad", "spatial.surface:right", null, launchProcessId: processId);
 
@@ -283,10 +361,12 @@ public sealed class ApplicationControlTests
             string surfaceId,
             WindowCloseState? closeState,
             bool occupied = false,
+            string? occupiedWindowId = null,
             int? launchProcessId = 8800,
             ApplicationLaunchProfile? profile = null,
             IReadOnlyList<WindowSnapshot>? windows = null,
-            IWindowCatalog? windowCatalog = null)
+            IWindowCatalog? windowCatalog = null,
+            IProcessTree? processTree = null)
         {
             var application = new ApplicationDescriptor(
                 applicationId, "Notepad", ApplicationLaunchKind.Executable, @"C:\Windows\notepad.exe", []);
@@ -300,7 +380,7 @@ public sealed class ApplicationControlTests
                     surfaceId,
                     "Right",
                     PresentationState.Default,
-                    occupied ? "pc.window:other" : null),
+                    occupied ? occupiedWindowId ?? "pc.window:other" : null),
                 WorkspaceEntity.CreateWindow("pc.window:other", "Other", "app:other"),
             ]);
             var process = new RecordingProcessLauncher(launchProcessId);
@@ -314,7 +394,8 @@ public sealed class ApplicationControlTests
                 windowCatalog ?? new FixedWindowCatalog(windows ?? [window]),
                 lifecycle,
                 focus,
-                profile is null ? null : new InMemoryProfileStore(profile));
+                profile is null ? null : new InMemoryProfileStore(profile),
+                processTree: processTree);
             return new ApplicationControlFixture(service, process, lifecycle, focus, store);
         }
     }
@@ -401,5 +482,11 @@ public sealed class ApplicationControlTests
         public Task SaveAsync(ApplicationLaunchProfile value, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task<bool> DeleteAsync(string profileId, CancellationToken cancellationToken) => Task.FromResult(false);
+    }
+
+    private sealed class DescendantProcessTree(int childProcessId, int parentProcessId) : IProcessTree
+    {
+        public bool IsDescendantOf(int processId, int ancestorProcessId) =>
+            processId == childProcessId && ancestorProcessId == parentProcessId;
     }
 }

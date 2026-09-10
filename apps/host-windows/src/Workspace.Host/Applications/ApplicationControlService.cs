@@ -278,7 +278,7 @@ public sealed class ApplicationControlService(
         {
             var launch = await ResolveLaunchAsync(request, cancellationToken);
             var preflight = await workspaceStore.LoadAsync(cancellationToken);
-            EnsureRequestedSurfaceIsAvailable(preflight, launch.SurfaceEntityId, request.ReplaceOccupied == true);
+            EnsureRequestedSurfaceExists(preflight, launch.SurfaceEntityId);
 
             var existing = FindVisibleWindows(
                 await windowCatalog.ListAsync(cancellationToken), launch.Application.Id);
@@ -286,11 +286,15 @@ public sealed class ApplicationControlService(
                 throw new ApplicationControlException("application_window_ambiguous", "Multiple visible application windows match the request.");
             if (launch.LaunchPolicy == ApplicationLaunchPolicy.ReuseOrLaunch && existing.Count == 1)
             {
+                EnsureRequestedSurfaceIsAvailable(preflight, launch.SurfaceEntityId,
+                    ResolveWindowEntityId(preflight, launch.Application, existing[0]), request.ReplaceOccupied == true);
                 var reused = await BindAndFocusAsync(request, launch, existing[0], null,
                     ApplicationOpenDisposition.Reused, cancellationToken);
                 await AuditAsync(request, reused, ApplicationLifecycleState.Open, null, cancellationToken);
                 return reused;
             }
+
+            EnsureRequestedSurfaceIsAvailable(preflight, launch.SurfaceEntityId, null, request.ReplaceOccupied == true);
 
             var observedHwnds = (await windowCatalog.ListAsync(cancellationToken))
                 .Select(window => window.Hwnd)
@@ -539,14 +543,22 @@ public sealed class ApplicationControlService(
         return surfaceId;
     }
 
-    private static void EnsureRequestedSurfaceIsAvailable(
-        WorkspaceDocument document, string? surfaceId, bool replaceOccupied)
+    private static void EnsureRequestedSurfaceExists(WorkspaceDocument document, string? surfaceId)
     {
         if (surfaceId is null) return;
         var surface = document.Entities.FirstOrDefault(entity => entity.Id == surfaceId);
         if (surface is null || surface.Kind != EntityKinds.Surface)
             throw new ApplicationControlException("surface_not_found", "Target surface was not found.");
-        if (!replaceOccupied && surface.Relationships.Any(relationship => relationship.Type == "displays"))
+    }
+
+    private static void EnsureRequestedSurfaceIsAvailable(
+        WorkspaceDocument document, string? surfaceId, string? resolvedWindowId, bool replaceOccupied)
+    {
+        if (surfaceId is null) return;
+        var surface = document.Entities.Single(entity => entity.Id == surfaceId);
+        var occupiedWindow = surface.Relationships.FirstOrDefault(relationship => relationship.Type == "displays")?.TargetId;
+        if (!replaceOccupied && occupiedWindow is not null
+            && !string.Equals(occupiedWindow, resolvedWindowId, StringComparison.Ordinal))
             throw new ApplicationControlException("surface_occupied", "Target surface is already occupied.");
     }
 

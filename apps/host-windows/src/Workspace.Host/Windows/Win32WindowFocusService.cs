@@ -29,10 +29,7 @@ public sealed class Win32WindowFocusService : IWindowFocusService
             && !candidate.IsMinimized
             && candidate.Bounds.Width > 0
             && candidate.Bounds.Height > 0
-            && string.Equals(
-                _windowReconciler.ResolveEntityId(candidate),
-                entityId,
-                StringComparison.Ordinal));
+            && _windowReconciler.MatchesEntityId(candidate, entityId));
         if (window is null)
         {
             throw new KeyNotFoundException(

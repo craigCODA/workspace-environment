@@ -88,6 +88,21 @@ public sealed class WindowReconcilerTests
         Assert.Contains(opened.Stream.StreamId, capture.StoppedStreamIds);
     }
 
+    [Fact]
+    public async Task ExactPersistedWindowIdentityResolvesToTheCurrentRuntimeForSurfaceCapture()
+    {
+        var capture = new RecordingWindowCapture();
+        var reconciler = new WindowReconciler(capture);
+        var window = new WindowSnapshot((nint)0x2a, 42, "Workspace Test Window",
+            new WindowBounds(0, 0, 800, 600), true, false, "pc.application:workspace-test");
+        await reconciler.ReconcileAsync([window], CancellationToken.None);
+
+        var stream = await reconciler.OpenSurfaceAsync(
+            reconciler.ResolveExactEntityId(window), CancellationToken.None);
+
+        Assert.Equal("stream-1", stream.StreamId);
+    }
+
     private sealed class RecordingWindowCapture : IWindowCapture
     {
         private int _nextStreamId;

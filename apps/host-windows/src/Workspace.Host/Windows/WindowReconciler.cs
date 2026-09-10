@@ -32,6 +32,17 @@ public sealed class WindowReconciler : IAsyncDisposable
         return $"pc.window:{snapshot.ApplicationId}";
     }
 
+    public string ResolveExactEntityId(WindowSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(snapshot.ApplicationId);
+        return $"pc.window:{snapshot.ApplicationId}:{snapshot.Hwnd.ToInt64():X}";
+    }
+
+    public bool MatchesEntityId(WindowSnapshot snapshot, string entityId) =>
+        string.Equals(ResolveEntityId(snapshot), entityId, StringComparison.Ordinal)
+        || string.Equals(ResolveExactEntityId(snapshot), entityId, StringComparison.Ordinal);
+
     public async Task<WindowRuntimeBinding> TrackAsync(
         WindowSnapshot snapshot,
         CancellationToken cancellationToken)
@@ -148,7 +159,9 @@ public sealed class WindowReconciler : IAsyncDisposable
 
             if (!_runtime.TryGetValue(entityId, out var runtime))
             {
-                throw new KeyNotFoundException($"Window entity '{entityId}' has no current Windows window.");
+                runtime = _runtime.Values.SingleOrDefault(snapshot => MatchesEntityId(snapshot, entityId));
+                if (runtime is null)
+                    throw new KeyNotFoundException($"Window entity '{entityId}' has no current Windows window.");
             }
 
             var stream = await _capture.StartAsync(runtime.Hwnd, cancellationToken);
