@@ -425,7 +425,6 @@ export class WorkspaceScene {
         textureTarget,
         {
           inputSink: binding.inputWindowId ? this.#inputSinkFactory?.(binding.inputWindowId) : undefined,
-          boundWindowId: windowId,
           initialPresentation: entity.presentation,
           presentationSink: this.#presentationSinkFactory?.(binding.presentationSurfaceId),
         },
