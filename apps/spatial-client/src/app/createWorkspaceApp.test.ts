@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  canEditDurablePresentation,
   initializeReadyWorkspace,
   initializeWorkspaceConnection,
   NativeCommandResultRelay,
@@ -110,4 +111,12 @@ test('camera capture is reserved for primary clicks on empty workspace', () => {
     interactiveUi: false,
     surfaceHit: true,
   }), false);
+});
+
+test('durable placement editing is disabled while a surface is docked', () => {
+  const docked = new Set(['spatial.surface:chatgpt']);
+  const isDocked = (id: string): boolean => docked.has(id);
+
+  assert.equal(canEditDurablePresentation('spatial.surface:chatgpt', isDocked), false);
+  assert.equal(canEditDurablePresentation('spatial.surface:terminal', isDocked), true);
 });
