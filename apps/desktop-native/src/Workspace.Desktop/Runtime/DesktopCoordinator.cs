@@ -97,14 +97,22 @@ public sealed class DesktopCoordinator :
         await _bridge.WaitForRendererAsync(cancellationToken);
         PostPreferences();
 
-        await StartAgentAsync(cancellationToken);
         StartVoice();
+        var agentStartup = await AgentStartupRecovery.TryStartAsync(
+            StartAgentAsync,
+            CleanupFailedAgentAsync,
+            cancellationToken);
+        if (!agentStartup.Ready)
+        {
+            ReportAgentUnavailable(agentStartup.Error);
+        }
+
         PostOnUi("runtime.health", new
         {
             state = "healthy",
             host = "ready",
             renderer = "ready",
-            agent = "ready",
+            agent = agentStartup.Ready ? "ready" : "unavailable",
             voice = _voice is null ? "recovery" : "ready",
         });
         _started = true;
@@ -124,26 +132,50 @@ public sealed class DesktopCoordinator :
             cancellationToken);
     }
 
-    private async Task<bool> RestartAgentAsync(CancellationToken cancellationToken)
+    private async ValueTask CleanupFailedAgentAsync()
     {
-        if (_agent is not null)
-        {
-            await _agent.DisposeAsync();
-            _agent = null;
-        }
+        var agent = _agent;
+        _agent = null;
         _agentEvents = null;
         _agentTurnActive = false;
-        try
+        if (agent is not null)
         {
-            await StartAgentAsync(cancellationToken);
+            await agent.DisposeAsync();
+        }
+    }
+
+    private void ReportAgentUnavailable(string? error)
+    {
+        var provider = AgentProviderDisplayName(_profile.AgentProvider);
+        var detail = string.IsNullOrWhiteSpace(error)
+            ? "The provider could not start."
+            : error.Trim();
+        var message = $"{provider} is unavailable. {detail}";
+        AddTerminalEvent(message);
+        PostOnUi("voice.state", new { state = "needs-attention" });
+        PostOnUi("voice.caption", new
+        {
+            text = message,
+            final = true,
+            utteranceId = "agent-startup-unavailable",
+        });
+        PostOnUi("agent.event", new { level = "error", summary = message });
+    }
+
+    private async Task<bool> RestartAgentAsync(CancellationToken cancellationToken)
+    {
+        await CleanupFailedAgentAsync();
+        var startup = await AgentStartupRecovery.TryStartAsync(
+            StartAgentAsync,
+            CleanupFailedAgentAsync,
+            cancellationToken);
+        if (startup.Ready)
+        {
             return true;
         }
-        catch (Exception exception)
-        {
-            AddTerminalEvent($"Agent restart failed: {exception.Message}");
-            await SpeakAsync("I could not start that agent provider yet.");
-            return false;
-        }
+
+        ReportAgentUnavailable(startup.Error);
+        return false;
     }
 
     private ICodingAgent CreateCodingAgent(AgentProvider provider)
@@ -169,6 +201,13 @@ public sealed class DesktopCoordinator :
             }),
         };
     }
+
+    private static string AgentProviderDisplayName(AgentProvider provider) => provider switch
+    {
+        AgentProvider.SpaceXAI => "Grok (xAI API)",
+        AgentProvider.Cursor => "Cursor",
+        _ => "ChatGPT (Codex)",
+    };
 
     private void StartVoice()
     {
@@ -297,7 +336,7 @@ public sealed class DesktopCoordinator :
         var agent = _agent;
         if (agent is null)
         {
-            await SpeakAsync("The coding agent is not ready yet.");
+            await SpeakAsync("The selected agent provider is unavailable. Fix its sign-in or choose another provider.");
             return;
         }
 
@@ -412,6 +451,10 @@ public sealed class DesktopCoordinator :
             {
                 switch (agentEvent)
                 {
+                    case AgentStatus status:
+                        AddTerminalEvent(status.Message);
+                        PostOnUi("agent.event", new { summary = status.Message });
+                        break;
                     case AgentAssistantDelta delta:
                         _assistantResponse.Append(delta.Text);
                         break;
@@ -889,6 +932,8 @@ public sealed class DesktopCoordinator :
         "camera.return-home" => "return your view home",
         "surface.move" => "move a surface",
         "surface.resize" => "resize a surface",
+        "surface.dock" => "change a surface docking mode",
+        "surface.collapse" => "change a surface visibility mode",
         _ => "adjust the workspace view",
     };
 
@@ -999,15 +1044,15 @@ public sealed class DesktopCoordinator :
                 var restarted = await RestartAgentAsync(_lifetime.Token);
                 if (agentProvider == AgentProvider.Cursor)
                 {
-                    await SpeakAsync("Cursor support is coming soon. Coda will keep using Codex until Cursor is ready.");
+                    await SpeakAsync("Cursor support is coming soon. Coda will keep using ChatGPT through Codex until Cursor is ready.");
                 }
                 else if (restarted && agentProvider == AgentProvider.SpaceXAI)
                 {
-                    await SpeakAsync("Switched the coding agent to SpaceXAI.");
+                    await SpeakAsync("Switched Coda to Grok.");
                 }
                 else if (restarted)
                 {
-                    await SpeakAsync("Switched the coding agent to Codex.");
+                    await SpeakAsync("Switched Coda to ChatGPT through Codex.");
                 }
             }
         }
@@ -1264,8 +1309,7 @@ public sealed class DesktopCoordinator :
         + "Arguments must be structured tokens, never shell commands or executable paths. "
         + "You may control the Three.js space with private directives shaped exactly like "
         + "[[scene:{\"command\":\"camera.focus\",\"args\":{\"entityId\":\"exact id from snapshot\"}}]]. "
-        + "Allowed scene commands: camera.navigate, camera.focus, camera.stop, camera.return-home, "
-        + "surface.move, surface.resize. Directive markup is removed before speech. "
+        + $"Allowed scene commands: {SceneDirectiveParser.AgentPromptCommandList}. Directive markup is removed before speech. "
         + $"Current structured scene snapshot: {snapshot}. User request: {text}";
 
     private static string RendererVoiceState(VoiceState state) => state switch
