@@ -132,6 +132,18 @@ Verify these behaviors on an interactive Windows desktop:
 4. Restart the app. Coda starts compact with its chat and activity panels collapsed while the beacon, voice state, and controls remain available.
 5. Open the **Agent** selector. `Codex`, `SpaceXAI`, and `Cursor (soon)` are visible. Changing the selection uses the existing `agentProvider` preference path; Cursor retains its current compatibility/fallback runtime behavior.
 
+## Default ChatGPT startup acceptance
+
+The default application startup uses the ordinary typed application-control path. ChatGPT receives no executable-path, shell, package, or credential exception.
+
+Verify these behaviors on an interactive Windows desktop:
+
+1. With the signed-in Windows ChatGPT application already open, start Workspace Environment. The existing ChatGPT window is reused and appears through its durable spatial surface rather than launching a duplicate instance.
+2. With ChatGPT installed but closed, start Workspace Environment. The host launches ChatGPT through `application.open` with `reuseOrLaunch`, observes its real top-level window, and presents that window as a spatial surface.
+3. Move or resize the ChatGPT surface, close Workspace Environment, leave ChatGPT running, and start Workspace Environment again. The durable ChatGPT window/surface identity and stored presentation are reused.
+4. On a Windows machine where ChatGPT is not installed or where the `ChatGPT` application search is not uniquely resolved, Workspace Environment still reaches its normal ready state and remains usable. No guessed application is launched.
+5. A ChatGPT-specific search/open failure does not put Coda into the host-disconnected state; only failure of the underlying Workspace Host connection uses that health path.
+
 ## V0 boundaries
 
 V0 is deliberately narrow:
