@@ -25,6 +25,10 @@ export interface SceneControlTarget extends CameraPoseTarget {
   snapshot(selectedEntityId?: string | null): SceneSnapshot;
   presentationFor(entityId: string): PresentationState | null;
   commitPresentation(entityId: string, presentation: PresentationState): Promise<void>;
+  setSurfaceDocked(entityId: string, docked: boolean): void;
+  isSurfaceDocked(entityId: string): boolean;
+  setSurfaceCollapsed(entityId: string, collapsed: boolean): void;
+  isSurfaceCollapsed(entityId: string): boolean;
 }
 
 export type SceneCommandResult = Readonly<{
@@ -42,6 +46,11 @@ function finite(value: unknown, label: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new Error(`${label} must be finite.`);
   }
+  return value;
+}
+
+function bool(value: unknown, label: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(`${label} must be boolean.`);
   return value;
 }
 
@@ -179,6 +188,24 @@ export class SceneCommandController {
           const next = { ...current, size };
           await this.#target.commitPresentation(entityId, next);
           return { id, ok: true, payload: { entityId, presentation: next } };
+        }
+        case 'surface.dock': {
+          const entityId = typeof args.entityId === 'string' ? args.entityId : '';
+          if (!this.#target.presentationFor(entityId)) {
+            throw new Error(`Unknown scene entity: ${entityId || '(missing)'}`);
+          }
+          const docked = bool(args.docked, 'docked');
+          this.#target.setSurfaceDocked(entityId, docked);
+          return { id, ok: true, payload: { entityId, docked } };
+        }
+        case 'surface.collapse': {
+          const entityId = typeof args.entityId === 'string' ? args.entityId : '';
+          if (!this.#target.presentationFor(entityId)) {
+            throw new Error(`Unknown scene entity: ${entityId || '(missing)'}`);
+          }
+          const collapsed = bool(args.collapsed, 'collapsed');
+          this.#target.setSurfaceCollapsed(entityId, collapsed);
+          return { id, ok: true, payload: { entityId, collapsed } };
         }
         default:
           return { id, ok: false, error: `Unsupported scene command: ${command || '(missing)'}` };
