@@ -64,6 +64,7 @@ jobs:
           name: workspace-environment-native-coda
           path: .native-package/**
           if-no-files-found: error
+          include-hidden-files: true
 
       - name: Build Electron fallback installer
         shell: pwsh
