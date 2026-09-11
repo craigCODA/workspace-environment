@@ -43,6 +43,7 @@ test('resolved ChatGPT search opens the stable application with reuseOrLaunch', 
 
   assert.deepEqual(result, {
     status: 'opened',
+    applicationId: 'pc.application:chatgpt',
     surfaceEntityId: 'spatial.surface:chatgpt',
     windowEntityId: 'pc.window:chatgpt',
   });
@@ -80,6 +81,7 @@ test('opened ChatGPT tolerates a host that omits optional semantic ids', async (
 
   assert.deepEqual(await openDefaultChatGpt(handler), {
     status: 'opened',
+    applicationId: 'pc.application:chatgpt',
     surfaceEntityId: null,
     windowEntityId: null,
   });
