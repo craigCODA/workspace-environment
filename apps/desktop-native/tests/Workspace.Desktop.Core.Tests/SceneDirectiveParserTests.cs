@@ -16,6 +16,21 @@ public sealed class SceneDirectiveParserTests
         Assert.Equal("terminal", result.Directives[0].Arguments.GetProperty("entityId").GetString());
     }
 
+    [Theory]
+    [InlineData("surface.dock", "docked")]
+    [InlineData("surface.collapse", "collapsed")]
+    public void Accepts_typed_surface_presentation_actions(string command, string stateProperty)
+    {
+        var result = SceneDirectiveParser.Parse(
+            $"Done. [[scene:{{\"command\":\"{command}\",\"args\":{{\"entityId\":\"spatial.surface:chatgpt\",\"{stateProperty}\":true}}}}]]");
+
+        Assert.Equal("Done.", result.SpokenText);
+        Assert.Single(result.Directives);
+        Assert.Equal(command, result.Directives[0].Command);
+        Assert.Equal("spatial.surface:chatgpt", result.Directives[0].Arguments.GetProperty("entityId").GetString());
+        Assert.True(result.Directives[0].Arguments.GetProperty(stateProperty).GetBoolean());
+    }
+
     [Fact]
     public void Rejects_unknown_scene_actions()
     {
