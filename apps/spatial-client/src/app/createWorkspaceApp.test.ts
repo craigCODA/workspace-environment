@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  initializeReadyWorkspace,
   initializeWorkspaceConnection,
   NativeCommandResultRelay,
   shouldRequestPointerLock,
@@ -21,6 +22,48 @@ test('initial connection agreement requests application inventory without user a
   await initializeWorkspaceConnection(socket);
 
   assert.deepEqual(calls, ['ready', 'application.list']);
+});
+
+test('workspace readiness is posted before optional default application startup', async () => {
+  const calls: string[] = [];
+  const socket = {
+    async waitUntilOpen(): Promise<void> {
+      calls.push('connected');
+    },
+    async sendCommand(operation: string): Promise<void> {
+      calls.push(operation);
+    },
+  };
+
+  await initializeReadyWorkspace(
+    socket,
+    () => calls.push('ready'),
+    async () => { calls.push('default-app'); },
+  );
+  await new Promise<void>((done) => queueMicrotask(done));
+
+  assert.deepEqual(calls, ['connected', 'application.list', 'ready', 'default-app']);
+});
+
+test('optional default application failure does not reject workspace readiness', async () => {
+  const calls: string[] = [];
+  const socket = {
+    async waitUntilOpen(): Promise<void> {
+      calls.push('connected');
+    },
+    async sendCommand(operation: string): Promise<void> {
+      calls.push(operation);
+    },
+  };
+
+  await assert.doesNotReject(() => initializeReadyWorkspace(
+    socket,
+    () => calls.push('ready'),
+    async () => { throw new Error('optional app failed'); },
+  ));
+  await new Promise<void>((done) => queueMicrotask(done));
+
+  assert.deepEqual(calls, ['connected', 'application.list', 'ready']);
 });
 
 test('an Alt-reserved keyup stays isolated after Alt is released first', () => {
