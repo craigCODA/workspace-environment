@@ -15,6 +15,8 @@ class FakeScene implements SceneControlTarget {
     rotation: { x: 0, y: 0, z: 0, w: 1 },
     size: { x: 4, y: 2, z: 0.1 },
   };
+  docked = false;
+  collapsed = false;
 
   getCameraPose(): CameraPose { return structuredClone(this.pose); }
   setCameraPose(pose: CameraPose): void { this.pose = structuredClone(pose); }
@@ -38,6 +40,20 @@ class FakeScene implements SceneControlTarget {
   }
   async commitPresentation(_entityId: string, presentation: PresentationState): Promise<void> {
     this.presentation = structuredClone(presentation);
+  }
+  setSurfaceDocked(entityId: string, docked: boolean): void {
+    if (entityId !== 'surface:one') throw new Error('unknown surface');
+    this.docked = docked;
+  }
+  isSurfaceDocked(entityId: string): boolean {
+    return entityId === 'surface:one' && this.docked;
+  }
+  setSurfaceCollapsed(entityId: string, collapsed: boolean): void {
+    if (entityId !== 'surface:one') throw new Error('unknown surface');
+    this.collapsed = collapsed;
+  }
+  isSurfaceCollapsed(entityId: string): boolean {
+    return entityId === 'surface:one' && this.collapsed;
   }
 }
 
@@ -65,6 +81,69 @@ test('surface resize rejects non-positive dimensions and preserves presentation'
 
   assert.equal(result.ok, false);
   assert.deepEqual(target.presentation.size, { x: 4, y: 2, z: 0.1 });
+});
+
+test('surface dock command changes only transient dock state', async () => {
+  const target = new FakeScene();
+  const controller = new SceneCommandController(target, new CameraNavigator(target));
+  const durable = structuredClone(target.presentation);
+
+  const docked = await controller.handle({
+    id: 'dock-1',
+    command: 'surface.dock',
+    args: { entityId: 'surface:one', docked: true },
+  });
+  const undocked = await controller.handle({
+    id: 'dock-2',
+    command: 'surface.dock',
+    args: { entityId: 'surface:one', docked: false },
+  });
+
+  assert.deepEqual(docked, {
+    id: 'dock-1',
+    ok: true,
+    payload: { entityId: 'surface:one', docked: true },
+  });
+  assert.deepEqual(undocked, {
+    id: 'dock-2',
+    ok: true,
+    payload: { entityId: 'surface:one', docked: false },
+  });
+  assert.equal(target.docked, false);
+  assert.deepEqual(target.presentation, durable);
+});
+
+test('surface collapse command preserves dock state', async () => {
+  const target = new FakeScene();
+  target.docked = true;
+  const controller = new SceneCommandController(target, new CameraNavigator(target));
+
+  const result = await controller.handle({
+    id: 'collapse-1',
+    command: 'surface.collapse',
+    args: { entityId: 'surface:one', collapsed: true },
+  });
+
+  assert.deepEqual(result, {
+    id: 'collapse-1',
+    ok: true,
+    payload: { entityId: 'surface:one', collapsed: true },
+  });
+  assert.equal(target.collapsed, true);
+  assert.equal(target.docked, true);
+});
+
+test('surface presentation commands reject unknown entities', async () => {
+  const target = new FakeScene();
+  const controller = new SceneCommandController(target, new CameraNavigator(target));
+
+  const result = await controller.handle({
+    id: 'dock-missing',
+    command: 'surface.dock',
+    args: { entityId: 'surface:missing', docked: true },
+  });
+
+  assert.equal(result.ok, false);
 });
 
 test('unknown commands always receive an error result', async () => {

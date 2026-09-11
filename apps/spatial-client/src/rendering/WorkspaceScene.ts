@@ -38,6 +38,26 @@ export function calculatePlanarMovement(
   };
 }
 
+/**
+ * Camera-local presentation used by tool-panel surfaces. The surface remains the
+ * same durable spatial entity; only its rendered presentation becomes transient.
+ */
+export function dockedSurfacePresentation(aspect: number): PresentationState {
+  const safeAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 16 / 9;
+  const depth = 2.4;
+  const halfHeight = Math.tan(THREE.MathUtils.degToRad(52 / 2)) * depth;
+  const halfWidth = halfHeight * safeAspect;
+  const width = 1.05;
+  const height = 1.8;
+  const margin = 0.12;
+  const x = Math.max(0.12, halfWidth - width / 2 - margin);
+  return {
+    position: { x, y: 0, z: -depth },
+    rotation: { x: 0, y: 0, z: 0, w: 1 },
+    size: { x: width, y: height, z: 0.035 },
+  };
+}
+
 export type SurfaceBinding = Readonly<{
   captureWindowId: string | null;
   inputWindowId: string | null;
@@ -103,6 +123,8 @@ export class WorkspaceScene {
   readonly #raycaster = new THREE.Raycaster();
   readonly #entities = new Map<string, THREE.Object3D>();
   readonly #entityStates = new Map<string, WorkspaceEntity>();
+  readonly #dockedSurfaceIds = new Set<string>();
+  readonly #collapsedSurfaceIds = new Set<string>();
   readonly #resizeObserver: ResizeObserver;
   #yaw = 0;
   #pitch = 0;
@@ -135,6 +157,7 @@ export class WorkspaceScene {
     this.#camera.rotation.order = 'YXZ';
     this.#pitch = this.#camera.rotation.x;
     this.#yaw = this.#camera.rotation.y;
+    this.#scene.add(this.#camera);
 
     this.#renderer = testOptions.renderer ?? new THREE.WebGLRenderer({
       antialias: true,
@@ -162,7 +185,7 @@ export class WorkspaceScene {
     if (object && this.#registry.resolve(entity.kind).kind === 'application-surface') {
       const shouldReplace = lifecycle instanceof SurfaceBindingLifecycle
         ? lifecycle.rebind(entity, () => {
-          this.#scene.remove(object!);
+          object!.removeFromParent();
           this.#disposeEntityObject(object!);
           this.#entities.delete(entity.id);
         })
@@ -174,26 +197,32 @@ export class WorkspaceScene {
       object.name = `entity:${entity.id}`;
       object.userData.entityId = entity.id;
       this.#entities.set(entity.id, object);
-      this.#scene.add(object);
+      if (this.#dockedSurfaceIds.has(entity.id)) this.#camera.add(object);
+      else this.#scene.add(object);
     }
 
     const applicationSurface = object.userData.applicationSurface;
     if (applicationSurface instanceof ApplicationSurface) {
       applicationSurface.acceptAuthoritativePresentation(entity.presentation);
+      applicationSurface.setTransientPresentation(
+        this.#dockedSurfaceIds.has(entity.id)
+          ? dockedSurfacePresentation(this.#camera.aspect)
+          : null,
+      );
     } else {
       const { position, rotation, size } = entity.presentation;
       object.position.set(position.x, position.y, position.z);
       object.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
       object.scale.set(size.x, size.y, size.z);
     }
-    object.visible = true;
+    object.visible = !this.#collapsedSurfaceIds.has(entity.id);
   }
 
   remove(entityId: string): void {
     const object = this.#entities.get(entityId);
     if (!object) return;
 
-    this.#scene.remove(object);
+    object.removeFromParent();
     this.#disposeEntityObject(object);
     this.#entities.delete(entityId);
     this.#entityStates.delete(entityId);
@@ -266,6 +295,40 @@ export class WorkspaceScene {
     await surface.commitPresentation(presentation);
   }
 
+  setSurfaceDocked(entityId: string, docked: boolean): void {
+    if (docked) this.#dockedSurfaceIds.add(entityId);
+    else this.#dockedSurfaceIds.delete(entityId);
+
+    const object = this.#entities.get(entityId);
+    if (!object) return;
+    const surface = object.userData.applicationSurface;
+    if (!(surface instanceof ApplicationSurface)) return;
+
+    if (docked) {
+      this.#camera.add(object);
+      surface.setTransientPresentation(dockedSurfacePresentation(this.#camera.aspect));
+    } else {
+      this.#scene.add(object);
+      surface.setTransientPresentation(null);
+    }
+    object.visible = !this.#collapsedSurfaceIds.has(entityId);
+  }
+
+  isSurfaceDocked(entityId: string): boolean {
+    return this.#dockedSurfaceIds.has(entityId);
+  }
+
+  setSurfaceCollapsed(entityId: string, collapsed: boolean): void {
+    if (collapsed) this.#collapsedSurfaceIds.add(entityId);
+    else this.#collapsedSurfaceIds.delete(entityId);
+    const object = this.#entities.get(entityId);
+    if (object) object.visible = !collapsed;
+  }
+
+  isSurfaceCollapsed(entityId: string): boolean {
+    return this.#collapsedSurfaceIds.has(entityId);
+  }
+
   lookBy(deltaX: number, deltaY: number): void {
     this.#yaw -= deltaX * 0.003;
     this.#pitch -= deltaY * 0.003;
@@ -323,6 +386,12 @@ export class WorkspaceScene {
     this.#camera.aspect = width / height;
     this.#camera.updateProjectionMatrix();
     this.#renderer.setSize(width, height, false);
+    for (const entityId of this.#dockedSurfaceIds) {
+      const surface = this.#entities.get(entityId)?.userData.applicationSurface;
+      if (surface instanceof ApplicationSurface) {
+        surface.setTransientPresentation(dockedSurfacePresentation(this.#camera.aspect));
+      }
+    }
   }
 
   dispose(): void {

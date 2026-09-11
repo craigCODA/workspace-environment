@@ -9,15 +9,23 @@ public sealed record SceneDirectiveResult(string SpokenText, IReadOnlyList<Scene
 
 public static partial class SceneDirectiveParser
 {
-    private static readonly HashSet<string> AllowedCommands = new(StringComparer.Ordinal)
-    {
+    private static readonly string[] CommandNames =
+    [
         "camera.navigate",
         "camera.focus",
         "camera.stop",
         "camera.return-home",
         "surface.move",
         "surface.resize",
-    };
+        "surface.dock",
+        "surface.collapse",
+    ];
+
+    private static readonly HashSet<string> AllowedCommands = new(
+        CommandNames,
+        StringComparer.Ordinal);
+
+    public static string AgentPromptCommandList { get; } = string.Join(", ", CommandNames);
 
     public static SceneDirectiveResult Parse(string response)
     {

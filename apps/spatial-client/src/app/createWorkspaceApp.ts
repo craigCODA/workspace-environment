@@ -27,7 +27,9 @@ import {
   ApplicationSurface,
   ProtocolPresentationSink,
 } from '../surfaces/ApplicationSurface.ts';
+import { SurfaceDockControls } from '../surfaces/SurfaceDockControls.ts';
 import { openDefaultChatGpt } from '../startup/DefaultApplicationStartup.ts';
+import { ChatGptSurfaceSession } from '../startup/ChatGptSurfaceSession.ts';
 
 export type WorkspaceApp = {
   destroy(): void;
@@ -91,6 +93,13 @@ export function shouldRequestPointerLock(input: {
   surfaceHit: boolean;
 }): boolean {
   return input.primaryButton && !input.interactiveUi && !input.surfaceHit;
+}
+
+export function canEditDurablePresentation(
+  surfaceEntityId: string,
+  isDocked: (entityId: string) => boolean,
+): boolean {
+  return !isDocked(surfaceEntityId);
 }
 
 function payloadRecord(message: WorkspaceNativeEnvelope): Record<string, unknown> {
@@ -172,6 +181,61 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   const workspaceCommandResults = new NativeCommandResultRelay((result) => {
     bridge.post('workspace.command.result', result);
   });
+
+  const chatGptSession = new ChatGptSurfaceSession({
+    setDocked: (surfaceEntityId, docked) => scene.setSurfaceDocked(surfaceEntityId, docked),
+    setCollapsed: (surfaceEntityId, collapsed) => scene.setSurfaceCollapsed(surfaceEntityId, collapsed),
+    isDocked: (surfaceEntityId) => scene.isSurfaceDocked(surfaceEntityId),
+    isCollapsed: (surfaceEntityId) => scene.isSurfaceCollapsed(surfaceEntityId),
+    focusWindow: async (windowEntityId) => {
+      const result = await workspaceCommands.handle({
+        id: 'chatgpt-focus',
+        command: 'window.focus',
+        args: { windowEntityId },
+      });
+      if (!result.ok) throw new Error('focus_failed');
+    },
+  });
+
+  let chatGptControls!: SurfaceDockControls;
+  const renderChatGptControls = (): void => {
+    const state = chatGptSession.state;
+    chatGptControls.setVisible(state.available);
+    chatGptControls.setMode(
+      state.collapsed ? 'collapsed' : state.docked ? 'docked' : 'spatial',
+    );
+    chatGptControls.setFocusEnabled(state.canFocus);
+  };
+
+  chatGptControls = new SurfaceDockControls(root, {
+    label: 'ChatGPT',
+    onDock: () => {
+      chatGptSession.dock();
+      renderChatGptControls();
+    },
+    onUndock: () => {
+      chatGptSession.undock();
+      renderChatGptControls();
+    },
+    onCollapse: () => {
+      chatGptSession.collapse();
+      renderChatGptControls();
+    },
+    onShow: () => {
+      chatGptSession.show();
+      renderChatGptControls();
+    },
+    onFocus: async () => {
+      try {
+        await chatGptSession.focus();
+      } catch {
+        coda.setState('needs-attention');
+        coda.showCaption('Windows could not focus the ChatGPT window.');
+      }
+    },
+  });
+  renderChatGptControls();
+
   const unsubscribeNative = [
     bridge.subscribe('voice.state', (message) => {
       const state = payloadRecord(message).state;
@@ -239,6 +303,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     }),
     bridge.subscribe('scene.command', (message) => {
       void sceneCommands.handle(message.payload).then((result) => {
+        renderChatGptControls();
         bridge.post('scene.command.result', result);
       });
     }),
@@ -250,7 +315,14 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   void initializeReadyWorkspace(
     socket,
     () => bridge.post('renderer.ready', { surface: 'spatial', version: 1 }),
-    () => openDefaultChatGpt(workspaceCommands),
+    async () => {
+      const result = await openDefaultChatGpt(workspaceCommands);
+      if (result.status === 'opened') {
+        chatGptSession.attach(result.surfaceEntityId, result.windowEntityId);
+        renderChatGptControls();
+      }
+      return result;
+    },
   ).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     coda.setState('needs-attention');
@@ -299,9 +371,9 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     coda.setState('needs-attention');
   };
 
-  const isCodaInteractiveTarget = (target: EventTarget | null): boolean =>
+  const isWorkspaceInteractiveTarget = (target: EventTarget | null): boolean =>
     target instanceof Element
-      && target.closest('.coda-chat, .coda-controls, .coda-terminal, .coda-transcript') !== null;
+      && target.closest('.coda-chat, .coda-controls, .coda-terminal, .coda-transcript, .surface-dock-controls') !== null;
 
   const clearSurfaceHover = (): void => {
     if (hoveredSurface) {
@@ -312,7 +384,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   };
 
   const updateSurfaceHover = (clientX: number, clientY: number): void => {
-    if (isCodaInteractiveTarget(document.elementFromPoint(clientX, clientY))) {
+    if (isWorkspaceInteractiveTarget(document.elementFromPoint(clientX, clientY))) {
       clearSurfaceHover();
       return;
     }
@@ -341,7 +413,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   };
 
   const onPointerDown = (event: PointerEvent): void => {
-    const interactiveUi = isCodaInteractiveTarget(event.target);
+    const interactiveUi = isWorkspaceInteractiveTarget(event.target);
     if (interactiveUi) return;
     sceneCommands.cancel('manual-pointer');
     const button: PointerButton | null = event.button === 0
@@ -350,7 +422,12 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
         ? 'secondary'
         : null;
     const hit = button ? scene.hitTestApplicationSurface(event.clientX, event.clientY) : null;
-    if (hit && button === 'primary' && event.altKey) {
+    if (
+      hit
+      && button === 'primary'
+      && event.altKey
+      && canEditDurablePresentation(hit.entityId, (entityId) => scene.isSurfaceDocked(entityId))
+    ) {
       clearSurfaceHover();
       selectedSurface = hit.surface;
       selectedEntityId = hit.entityId;
@@ -485,7 +562,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   };
 
   const onWheel = (event: WheelEvent): void => {
-    if (isCodaInteractiveTarget(event.target)) return;
+    if (isWorkspaceInteractiveTarget(event.target)) return;
     const hit = scene.hitTestApplicationSurface(event.clientX, event.clientY);
     if (!hit) return;
     sceneCommands.cancel('manual-wheel');
@@ -499,12 +576,12 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   };
 
   const onContextMenu = (event: MouseEvent): void => {
-    if (isCodaInteractiveTarget(event.target)) return;
+    if (isWorkspaceInteractiveTarget(event.target)) return;
     if (scene.hitTestApplicationSurface(event.clientX, event.clientY)) event.preventDefault();
   };
 
   const onKeyDown = (event: KeyboardEvent): void => {
-    if (isCodaInteractiveTarget(event.target)) return;
+    if (isWorkspaceInteractiveTarget(event.target)) return;
     if (event.key === 'Escape') {
       sceneCommands.cancel('manual-escape');
       selectedSurface = null;
@@ -514,7 +591,13 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       return;
     }
     sceneCommands.cancel('manual-keyboard');
-    if (selectedSurface && event.altKey && event.key.startsWith('Arrow')) {
+    if (
+      selectedSurface
+      && selectedEntityId
+      && canEditDurablePresentation(selectedEntityId, (entityId) => scene.isSurfaceDocked(entityId))
+      && event.altKey
+      && event.key.startsWith('Arrow')
+    ) {
       suppressedKeyReleases.reserve(event.key);
       event.preventDefault();
       const current = selectedSurface.displayedPresentation;
@@ -572,7 +655,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   };
 
   const onKeyUp = (event: KeyboardEvent): void => {
-    if (isCodaInteractiveTarget(event.target)) return;
+    if (isWorkspaceInteractiveTarget(event.target)) return;
     if (suppressedKeyReleases.consume(event.key)) {
       event.preventDefault();
       return;
@@ -622,6 +705,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       for (const unsubscribeMessage of unsubscribeNative) unsubscribeMessage();
       socket.close();
       bridge.destroy();
+      chatGptControls.destroy();
       coda.destroy();
       scene.dispose();
       window.clearTimeout(arrivalTimer);
