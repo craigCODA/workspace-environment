@@ -41,17 +41,12 @@ button {
 }
 
 .workspace-root.is-looking {
-  cursor: grabbing;
+  cursor: none;
 }
 
 .workspace-root.has-selected-surface,
 .workspace-root.is-surface-input {
   cursor: default;
-}
-
-.workspace-root.is-surface-hover,
-.workspace-root.is-surface-input.is-surface-hover {
-  cursor: none;
 }
 
 .workspace-root.is-presentation-drag {
