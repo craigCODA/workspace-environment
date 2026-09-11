@@ -44,6 +44,15 @@ export const AGENT_PROVIDERS: readonly AgentProvider[] = Object.freeze([
   'Cursor',
 ]);
 
+export const AGENT_PROVIDER_OPTIONS: readonly Readonly<{
+  value: AgentProvider;
+  label: string;
+}>[] = Object.freeze([
+  { value: 'Codex', label: 'Codex' },
+  { value: 'SpaceXAI', label: 'SpaceXAI' },
+  { value: 'Cursor', label: 'Cursor (soon)' },
+]);
+
 type CodaPresenceAction =
   | Readonly<{ type: 'state'; state: CodaState }>
   | Readonly<{ type: 'caption'; text: string }>
@@ -151,7 +160,7 @@ export class CodaPresence {
   readonly #terminalButton: HTMLButtonElement;
   readonly #chatButton: HTMLButtonElement;
   readonly #alertsButton: HTMLButtonElement;
-  readonly #agentProviderButton: HTMLButtonElement;
+  readonly #agentProviderSelect: HTMLSelectElement;
   readonly #options: CodaPresenceOptions;
   #model = createInitialCodaPresenceModel();
 
@@ -256,12 +265,28 @@ export class CodaPresence {
       this.setPreferences({ proactiveMode });
       this.#options.onPreferenceChange?.({ proactiveMode });
     });
-    this.#agentProviderButton = this.#controlButton(controls, 'Agent', () => {
-      const index = AGENT_PROVIDERS.indexOf(this.#model.agentProvider);
-      const agentProvider = AGENT_PROVIDERS[(index + 1) % AGENT_PROVIDERS.length]!;
+
+    const agentProviderControl = document.createElement('label');
+    agentProviderControl.className = 'coda-agent-provider';
+    const agentProviderLabel = document.createElement('span');
+    agentProviderLabel.textContent = 'Agent';
+    this.#agentProviderSelect = document.createElement('select');
+    this.#agentProviderSelect.setAttribute('aria-label', 'Agent provider');
+    for (const optionModel of AGENT_PROVIDER_OPTIONS) {
+      const option = document.createElement('option');
+      option.value = optionModel.value;
+      option.textContent = optionModel.label;
+      this.#agentProviderSelect.append(option);
+    }
+    this.#agentProviderSelect.addEventListener('change', () => {
+      const value = this.#agentProviderSelect.value;
+      if (!AGENT_PROVIDERS.includes(value as AgentProvider)) return;
+      const agentProvider = value as AgentProvider;
       this.setPreferences({ agentProvider });
       this.#options.onPreferenceChange?.({ agentProvider });
     });
+    agentProviderControl.append(agentProviderLabel, this.#agentProviderSelect);
+    controls.append(agentProviderControl);
 
     this.#element.append(
       beacon,
@@ -396,15 +421,7 @@ export class CodaPresence {
       : this.#model.proactiveMode === 'IncludeCompletion'
         ? 'Alerts: +done'
         : 'Alerts: quiet';
-    this.#agentProviderButton.setAttribute(
-      'aria-label',
-      `Agent provider: ${this.#model.agentProvider}`,
-    );
-    this.#agentProviderButton.textContent = this.#model.agentProvider === 'Codex'
-      ? 'Agent: Codex'
-      : this.#model.agentProvider === 'SpaceXAI'
-        ? 'Agent: SpaceXAI'
-        : 'Agent: Cursor (soon)';
+    this.#agentProviderSelect.value = this.#model.agentProvider;
     this.#terminal.hidden = !this.#model.terminalVisible || this.#model.terminalEvents.length === 0;
     this.#chat.hidden = !this.#model.chatVisible;
     this.#transcript.hidden = !this.#model.transcriptVisible
