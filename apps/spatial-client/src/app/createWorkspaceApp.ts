@@ -11,6 +11,7 @@ import {
   type ProactiveMode,
 } from '../onboarding/CodaPresence.ts';
 import { CameraNavigator } from '../navigation/CameraNavigator.ts';
+import { PointerLockLookController } from '../navigation/PointerLockLookController.ts';
 import { SceneCommandController } from '../navigation/SceneCommandController.ts';
 import { WorkspaceCommandController } from '../navigation/WorkspaceCommandController.ts';
 import {
@@ -69,6 +70,14 @@ type InitialSyncSocket = Pick<WorkspaceSocket, 'waitUntilOpen' | 'sendCommand'>;
 export async function initializeWorkspaceConnection(socket: InitialSyncSocket): Promise<void> {
   await socket.waitUntilOpen();
   await socket.sendCommand('application.list');
+}
+
+export function shouldRequestPointerLock(input: {
+  primaryButton: boolean;
+  interactiveUi: boolean;
+  surfaceHit: boolean;
+}): boolean {
+  return input.primaryButton && !input.interactiveUi && !input.surfaceHit;
 }
 
 function payloadRecord(message: WorkspaceNativeEnvelope): Record<string, unknown> {
@@ -144,6 +153,9 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     () => selectedEntityId,
     scene.getCameraPose(),
   );
+  const pointerLockLook = new PointerLockLookController((movementX, movementY) => {
+    sceneCommands.manualLook(movementX, movementY);
+  });
   const workspaceCommandResults = new NativeCommandResultRelay((result) => {
     bridge.post('workspace.command.result', result);
   });
@@ -237,10 +249,9 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
 
   const movementHint = document.createElement('p');
   movementHint.className = 'movement-hint';
-  movementHint.textContent = 'Drag to look around. Use W A S D to move. Alt-drag a surface to move; add Shift to resize.';
+  movementHint.textContent = 'Click empty space to look around. Press Escape to release the pointer. Use W A S D to move. Alt-drag a surface to move; add Shift to resize.';
   root.append(reticle, movementHint);
 
-  let pointerId: number | null = null;
   let surfacePointer: {
     pointerId: number;
     surface: ApplicationSurface;
@@ -259,8 +270,6 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     start: PresentationState;
     current: PresentationState;
   } | null = null;
-  let lastX = 0;
-  let lastY = 0;
   let hoveredSurface: ApplicationSurface | null = null;
 
   const reportInputError = (error: unknown): void => {
@@ -306,8 +315,19 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     void hit.surface.pointer('move', hit.u, hit.v).catch(reportInputError);
   };
 
+  const onPointerLockChange = (): void => {
+    const locked = document.pointerLockElement === root;
+    pointerLockLook.setLocked(locked);
+    root.classList.toggle('is-looking', locked);
+    if (locked) {
+      clearSurfaceHover();
+      root.focus({ preventScroll: true });
+    }
+  };
+
   const onPointerDown = (event: PointerEvent): void => {
-    if (isCodaInteractiveTarget(event.target)) return;
+    const interactiveUi = isCodaInteractiveTarget(event.target);
+    if (interactiveUi) return;
     sceneCommands.cancel('manual-pointer');
     const button: PointerButton | null = event.button === 0
       ? 'primary'
@@ -363,11 +383,14 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     selectedSurface = null;
     selectedEntityId = null;
     root.classList.remove('has-selected-surface');
-    pointerId = event.pointerId;
-    lastX = event.clientX;
-    lastY = event.clientY;
-    root.setPointerCapture(event.pointerId);
-    root.classList.add('is-looking');
+    if (shouldRequestPointerLock({
+      primaryButton: event.button === 0,
+      interactiveUi,
+      surfaceHit: hit !== null,
+    })) {
+      event.preventDefault();
+      void root.requestPointerLock();
+    }
   };
 
   const onPointerMove = (event: PointerEvent): void => {
@@ -410,11 +433,8 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       }
       return;
     }
-    if (pointerId !== null) {
-      if (event.pointerId !== pointerId) return;
-      sceneCommands.manualLook(event.clientX - lastX, event.clientY - lastY);
-      lastX = event.clientX;
-      lastY = event.clientY;
+    if (pointerLockLook.locked) {
+      pointerLockLook.move(event.movementX, event.movementY);
       return;
     }
     updateSurfaceHover(event.clientX, event.clientY);
@@ -446,12 +466,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
         active.v,
         active.button,
       ).catch(reportInputError);
-      return;
     }
-    if (event.pointerId !== pointerId) return;
-    pointerId = null;
-    root.classList.remove('is-looking');
-    if (root.hasPointerCapture(event.pointerId)) root.releasePointerCapture(event.pointerId);
   };
 
   const onWheel = (event: WheelEvent): void => {
@@ -480,7 +495,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       selectedSurface = null;
       selectedEntityId = null;
       root.classList.remove('has-selected-surface');
-      event.preventDefault();
+      if (document.pointerLockElement !== root) event.preventDefault();
       return;
     }
     sceneCommands.cancel('manual-keyboard');
@@ -565,6 +580,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   root.addEventListener('contextmenu', onContextMenu);
   root.addEventListener('keydown', onKeyDown);
   root.addEventListener('keyup', onKeyUp);
+  document.addEventListener('pointerlockchange', onPointerLockChange);
   root.focus({ preventScroll: true });
 
   let previousFrame = performance.now();
@@ -584,6 +600,8 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   return {
     destroy(): void {
       clearSurfaceHover();
+      if (document.pointerLockElement === root) document.exitPointerLock();
+      document.removeEventListener('pointerlockchange', onPointerLockChange);
       workspaceCommandResults.destroy();
       unsubscribe();
       for (const unsubscribeMessage of unsubscribeNative) unsubscribeMessage();
