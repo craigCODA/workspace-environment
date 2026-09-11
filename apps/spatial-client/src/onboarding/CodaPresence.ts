@@ -48,8 +48,8 @@ export const AGENT_PROVIDER_OPTIONS: readonly Readonly<{
   value: AgentProvider;
   label: string;
 }>[] = Object.freeze([
-  { value: 'Codex', label: 'Codex' },
-  { value: 'SpaceXAI', label: 'SpaceXAI' },
+  { value: 'Codex', label: 'ChatGPT (Codex)' },
+  { value: 'SpaceXAI', label: 'Grok (xAI API)' },
   { value: 'Cursor', label: 'Cursor (soon)' },
 ]);
 
