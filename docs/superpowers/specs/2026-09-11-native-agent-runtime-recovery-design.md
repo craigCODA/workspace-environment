@@ -21,3 +21,7 @@ The native Codex path also assumes an executable named `codex.exe` exists direct
 - Ordinary consumer ChatGPT is not represented as a direct programmable provider. ChatGPT subscription authentication continues through Codex.
 - Grok continues to require `XAI_API_KEY`.
 - The Electron fallback remains supported for renderer/host development, but is no longer the artifact presented as the native Coda build.
+
+## Verification checkpoint
+
+The recovery slice is verified through staged RED/GREEN gates for provider labeling, fallback error visibility, Windows Codex command-shim resolution, native artifact staging, and the final full Windows pipeline.
