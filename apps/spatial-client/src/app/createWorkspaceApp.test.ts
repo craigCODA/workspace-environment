@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   initializeWorkspaceConnection,
   NativeCommandResultRelay,
+  shouldRequestPointerLock,
   SuppressedKeyReleaseTracker,
 } from './createWorkspaceApp.ts';
 
@@ -43,4 +44,27 @@ test('does not post a late workspace command result after the app is destroyed',
   await new Promise<void>((done) => queueMicrotask(() => done()));
 
   assert.deepEqual(posted, []);
+});
+
+test('camera capture is reserved for primary clicks on empty workspace', () => {
+  assert.equal(shouldRequestPointerLock({
+    primaryButton: true,
+    interactiveUi: false,
+    surfaceHit: false,
+  }), true);
+  assert.equal(shouldRequestPointerLock({
+    primaryButton: false,
+    interactiveUi: false,
+    surfaceHit: false,
+  }), false);
+  assert.equal(shouldRequestPointerLock({
+    primaryButton: true,
+    interactiveUi: true,
+    surfaceHit: false,
+  }), false);
+  assert.equal(shouldRequestPointerLock({
+    primaryButton: true,
+    interactiveUi: false,
+    surfaceHit: true,
+  }), false);
 });
