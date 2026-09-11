@@ -17,6 +17,8 @@ public static partial class SceneDirectiveParser
         "camera.return-home",
         "surface.move",
         "surface.resize",
+        "surface.dock",
+        "surface.collapse",
     };
 
     public static SceneDirectiveResult Parse(string response)
