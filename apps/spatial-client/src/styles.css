@@ -100,13 +100,14 @@ button {
   top: clamp(1rem, 2.5vh, 2rem);
   right: clamp(1rem, 2.5vw, 2.4rem);
   display: flex;
+  align-items: center;
   gap: 0.38rem;
   pointer-events: auto;
 }
 
-.coda-controls button {
+.coda-controls button,
+.coda-agent-provider {
   min-height: 1.9rem;
-  padding: 0.28rem 0.58rem;
   border: 1px solid rgb(240 238 230 / 13%);
   border-radius: 999px;
   color: rgb(240 238 230 / 64%);
@@ -114,12 +115,17 @@ button {
   font-family: "Bahnschrift", "Arial Narrow", sans-serif;
   font-size: 0.68rem;
   letter-spacing: 0.025em;
-  cursor: pointer;
   backdrop-filter: blur(0.65rem);
 }
 
+.coda-controls button {
+  padding: 0.28rem 0.58rem;
+  cursor: pointer;
+}
+
 .coda-controls button:hover,
-.coda-controls button:focus-visible {
+.coda-controls button:focus-visible,
+.coda-agent-provider:focus-within {
   border-color: rgb(143 198 188 / 62%);
   color: #fffdf5;
   outline: none;
@@ -133,6 +139,30 @@ button {
 .coda-controls button:disabled {
   cursor: not-allowed;
   opacity: 0.38;
+}
+
+.coda-agent-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  padding: 0.18rem 0.3rem 0.18rem 0.56rem;
+}
+
+.coda-agent-provider select {
+  max-width: 8.6rem;
+  min-height: 1.42rem;
+  padding: 0 1.35rem 0 0.25rem;
+  border: 0;
+  outline: none;
+  color: #fffdf5;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.coda-agent-provider select option {
+  color: #f0eee6;
+  background: #17272a;
 }
 
 .coda-presence[data-state="listening"] .coda-beacon,
@@ -392,7 +422,6 @@ button {
     flex-wrap: wrap;
     justify-content: flex-end;
   }
-
 }
 
 @media (max-width: 640px) {
