@@ -18,5 +18,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Workspace.Desktop.Core\Workspace.Desktop.Core.csproj" />
+    <ProjectReference Include="..\..\src\Workspace.Desktop.Windows\Workspace.Desktop.Windows.csproj" />
   </ItemGroup>
 </Project>
