@@ -9,7 +9,7 @@ on:
 jobs:
   verify:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -19,8 +19,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: npm
-          cache-dependency-path: package-lock.json
 
       - name: Install Node dependencies
         if: ${{ hashFiles('package.json') != '' }}
@@ -56,13 +54,24 @@ jobs:
         shell: pwsh
         run: npm run native:build
 
-      - name: Build Windows installer
+      - name: Stage native Windows bundle
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stage-native-artifact.ps1 -OutputRoot .native-package
+
+      - name: Upload native Coda bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-environment-native-coda
+          path: .native-package/**
+          if-no-files-found: error
+
+      - name: Build Electron fallback installer
         shell: pwsh
         run: npm run dist:win
 
-      - name: Upload Windows installer
+      - name: Upload Electron fallback installer
         uses: actions/upload-artifact@v4
         with:
-          name: workspace-environment-windows-installer
+          name: workspace-environment-electron-fallback
           path: dist/Workspace Environment Setup 0.1.0.exe
           if-no-files-found: error
