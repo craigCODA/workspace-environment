@@ -9,7 +9,7 @@ on:
 jobs:
   verify:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -28,7 +28,7 @@ jobs:
       - name: Test TypeScript workspaces
         if: ${{ hashFiles('package.json') != '' }}
         shell: pwsh
-        run: npm test --workspaces --if-present
+        run: npm test
 
       - name: Typecheck TypeScript workspaces
         if: ${{ hashFiles('package.json') != '' }}
@@ -45,3 +45,34 @@ jobs:
         if: ${{ hashFiles('apps/host-windows/Workspace.Host.sln') != '' }}
         shell: pwsh
         run: dotnet test apps/host-windows/Workspace.Host.sln --configuration Release
+
+      - name: Test native Coda core
+        shell: pwsh
+        run: npm run native:test
+
+      - name: Build native Windows preview
+        shell: pwsh
+        run: npm run native:build
+
+      - name: Stage native Windows bundle
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stage-native-artifact.ps1 -OutputRoot .native-package
+
+      - name: Upload native Coda bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-environment-native-coda
+          path: .native-package/**
+          if-no-files-found: error
+          include-hidden-files: true
+
+      - name: Build Electron fallback installer
+        shell: pwsh
+        run: npm run dist:win
+
+      - name: Upload Electron fallback installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-environment-electron-fallback
+          path: dist/Workspace Environment Setup 0.1.0.exe
+          if-no-files-found: error
