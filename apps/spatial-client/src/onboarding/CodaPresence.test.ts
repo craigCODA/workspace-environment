@@ -89,10 +89,10 @@ test('agent provider preference can cycle independently of voice toggles', () =>
   assert.equal(next.proactiveMode, 'CriticalOnly');
 });
 
-test('agent provider selector exposes stable values and honest labels', () => {
+test('agent provider selector names the actual authentication path', () => {
   assert.deepEqual(AGENT_PROVIDER_OPTIONS, [
-    { value: 'Codex', label: 'Codex' },
-    { value: 'SpaceXAI', label: 'SpaceXAI' },
+    { value: 'Codex', label: 'ChatGPT (Codex)' },
+    { value: 'SpaceXAI', label: 'Grok (xAI API)' },
     { value: 'Cursor', label: 'Cursor (soon)' },
   ]);
 });
