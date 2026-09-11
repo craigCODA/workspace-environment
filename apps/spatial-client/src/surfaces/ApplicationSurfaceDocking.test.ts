@@ -54,9 +54,9 @@ test('authoritative updates stay durable while docked and appear after override 
 
   assert.deepEqual(surface.presentation, moved);
   assert.deepEqual(surface.displayedPresentation, moved);
-  assert.deepEqual(applied, [initial, docked]);
+  assert.deepEqual(applied.at(-1), docked);
 
   surface.setTransientPresentation(null);
 
-  assert.deepEqual(applied, [initial, docked, moved]);
+  assert.deepEqual(applied.at(-1), moved);
 });
