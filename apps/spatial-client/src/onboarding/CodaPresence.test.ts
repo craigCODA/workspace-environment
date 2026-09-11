@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  createInitialCodaPresenceModel,
   reduceCodaPresence,
   submitCodaInstruction,
   type CodaPresenceModel,
@@ -66,6 +67,14 @@ test('chat can be collapsed without changing voice preferences', () => {
 
   assert.equal(next.chatVisible, false);
   assert.equal(next.microphoneEnabled, true);
+});
+
+test('Coda starts compact with chat collapsed', () => {
+  const model = createInitialCodaPresenceModel();
+
+  assert.equal(model.chatVisible, false);
+  assert.equal(model.terminalVisible, false);
+  assert.equal(model.microphoneEnabled, true);
 });
 
 test('agent provider preference can cycle independently of voice toggles', () => {
