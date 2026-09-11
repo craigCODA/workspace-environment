@@ -185,6 +185,8 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   const chatGptSession = new ChatGptSurfaceSession({
     setDocked: (surfaceEntityId, docked) => scene.setSurfaceDocked(surfaceEntityId, docked),
     setCollapsed: (surfaceEntityId, collapsed) => scene.setSurfaceCollapsed(surfaceEntityId, collapsed),
+    isDocked: (surfaceEntityId) => scene.isSurfaceDocked(surfaceEntityId),
+    isCollapsed: (surfaceEntityId) => scene.isSurfaceCollapsed(surfaceEntityId),
     focusWindow: async (windowEntityId) => {
       const result = await workspaceCommands.handle({
         id: 'chatgpt-focus',
@@ -301,6 +303,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     }),
     bridge.subscribe('scene.command', (message) => {
       void sceneCommands.handle(message.payload).then((result) => {
+        renderChatGptControls();
         bridge.post('scene.command.result', result);
       });
     }),
