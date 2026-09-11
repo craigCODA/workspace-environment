@@ -38,11 +38,58 @@ export function calculatePlanarMovement(
   };
 }
 
+export type SurfaceBinding = Readonly<{
+  captureWindowId: string | null;
+  inputWindowId: string | null;
+  presentationSurfaceId: string;
+}>;
+
+/** Splits transient window ownership from durable display-surface presentation. */
+export function surfaceBindingFor(entity: WorkspaceEntity): SurfaceBinding {
+  const windowId = entity.relationships
+    .find((relationship) => relationship.type === 'displays')
+    ?.targetId ?? null;
+  return {
+    captureWindowId: windowId,
+    inputWindowId: windowId,
+    presentationSurfaceId: entity.id,
+  };
+}
+
+export function surfaceBindingNeedsReplacement(
+  currentWindowId: string | null | undefined,
+  entity: WorkspaceEntity,
+): boolean {
+  return currentWindowId !== surfaceBindingFor(entity).captureWindowId;
+}
+
+/** Owns the one-time disposal decision when a display surface changes window bindings. */
+export class SurfaceBindingLifecycle {
+  #windowId: string | null;
+
+  constructor(entity: WorkspaceEntity) {
+    this.#windowId = surfaceBindingFor(entity).captureWindowId;
+  }
+
+  rebind(entity: WorkspaceEntity, dispose: () => void): boolean {
+    const nextWindowId = surfaceBindingFor(entity).captureWindowId;
+    if (this.#windowId === nextWindowId) return false;
+    this.#windowId = nextWindowId;
+    dispose();
+    return true;
+  }
+}
+
 export type ApplicationSurfaceHit = Readonly<{
   entityId: string;
   surface: ApplicationSurface;
   u: number;
   v: number;
+}>;
+
+export type WorkspaceSceneTestOptions = Readonly<{
+  renderer?: THREE.WebGLRenderer;
+  resizeObserver?: ResizeObserver;
 }>;
 
 export class WorkspaceScene {
@@ -66,6 +113,7 @@ export class WorkspaceScene {
     surfaceStreamFactory: ((entityId: string) => SurfaceStream) | null = null,
     inputSinkFactory: ((entityId: string) => WindowInputSink) | null = null,
     presentationSinkFactory: ((entityId: string) => PresentationSink) | null = null,
+    testOptions: WorkspaceSceneTestOptions = {},
   ) {
     this.#registry = registry;
     this.#surfaceStreamFactory = surfaceStreamFactory;
@@ -88,7 +136,7 @@ export class WorkspaceScene {
     this.#pitch = this.#camera.rotation.x;
     this.#yaw = this.#camera.rotation.y;
 
-    this.#renderer = new THREE.WebGLRenderer({
+    this.#renderer = testOptions.renderer ?? new THREE.WebGLRenderer({
       antialias: true,
       powerPreference: 'high-performance',
     });
@@ -96,12 +144,12 @@ export class WorkspaceScene {
     this.#renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.#renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.#renderer.toneMappingExposure = 0.92;
-    this.#renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.#renderer.setPixelRatio(Math.min(typeof window === 'undefined' ? 1 : window.devicePixelRatio, 2));
     this.#renderer.xr.enabled = true;
     root.append(this.#renderer.domElement);
 
     this.#buildPlace();
-    this.#resizeObserver = new ResizeObserver(() => this.resize());
+    this.#resizeObserver = testOptions.resizeObserver ?? new ResizeObserver(() => this.resize());
     this.#resizeObserver.observe(root);
     this.resize();
     this.#renderer.setAnimationLoop(() => this.#renderer.render(this.#scene, this.#camera));
@@ -110,6 +158,17 @@ export class WorkspaceScene {
   upsert(entity: WorkspaceEntity): void {
     this.#entityStates.set(entity.id, entity);
     let object = this.#entities.get(entity.id);
+    const lifecycle = object?.userData.surfaceBindingLifecycle;
+    if (object && this.#registry.resolve(entity.kind).kind === 'application-surface') {
+      const shouldReplace = lifecycle instanceof SurfaceBindingLifecycle
+        ? lifecycle.rebind(entity, () => {
+          this.#scene.remove(object!);
+          this.#disposeEntityObject(object!);
+          this.#entities.delete(entity.id);
+        })
+        : surfaceBindingNeedsReplacement(object.userData.displayedWindowId, entity);
+      if (shouldReplace) object = undefined;
+    }
     if (!object) {
       object = this.#createEntityObject(entity);
       object.name = `entity:${entity.id}`;
@@ -135,6 +194,12 @@ export class WorkspaceScene {
     if (!object) return;
 
     this.#scene.remove(object);
+    this.#disposeEntityObject(object);
+    this.#entities.delete(entityId);
+    this.#entityStates.delete(entityId);
+  }
+
+  #disposeEntityObject(object: THREE.Object3D): void {
     const applicationSurface = object.userData.applicationSurface;
     if (applicationSurface instanceof ApplicationSurface) {
       void applicationSurface.dispose().catch(() => {
@@ -150,8 +215,6 @@ export class WorkspaceScene {
         material.dispose();
       }
     });
-    this.#entities.delete(entityId);
-    this.#entityStates.delete(entityId);
   }
 
   getCameraPose(): CameraPose {
@@ -352,30 +415,28 @@ export class WorkspaceScene {
   #createEntityObject(entity: WorkspaceEntity): THREE.Object3D {
     const descriptor = this.#registry.resolve(entity.kind);
     if (descriptor.kind === 'application-surface') {
-      if (this.#surfaceStreamFactory) {
-        const textureTarget = new ThreeSurfaceTextureTarget();
-        const surface = new ApplicationSurface(
-          this.#surfaceStreamFactory(entity.id),
-          textureTarget,
-          {
-            inputSink: this.#inputSinkFactory?.(entity.id),
-            initialPresentation: entity.presentation,
-            presentationSink: this.#presentationSinkFactory?.(entity.id),
-          },
-        );
-        textureTarget.object.userData.applicationSurface = surface;
-        surface.start();
-        return textureTarget.object;
-      }
-
-      return new THREE.Mesh(
-        new THREE.BoxGeometry(1.6, 0.95, 0.035),
-        new THREE.MeshStandardMaterial({
-          color: PALETTE.deepSeam,
-          roughness: 0.7,
-          metalness: 0.1,
-        }),
+      const binding = surfaceBindingFor(entity);
+      const windowId = binding.captureWindowId;
+      const textureTarget = new ThreeSurfaceTextureTarget();
+      const surface = new ApplicationSurface(
+        windowId && this.#surfaceStreamFactory
+          ? this.#surfaceStreamFactory(windowId)
+          : { async open() {}, async readFrame() { return null; }, async close() {} },
+        textureTarget,
+        {
+          inputSink: binding.inputWindowId ? this.#inputSinkFactory?.(binding.inputWindowId) : undefined,
+          boundWindowId: windowId,
+          initialPresentation: entity.presentation,
+          presentationSink: this.#presentationSinkFactory?.(binding.presentationSurfaceId),
+        },
       );
+      textureTarget.object.userData.applicationSurface = surface;
+      textureTarget.object.userData.displayedWindowId = windowId;
+      textureTarget.object.userData.surfaceBindingLifecycle = new SurfaceBindingLifecycle(entity);
+      if (windowId && this.#surfaceStreamFactory) {
+        surface.start();
+      }
+      return textureTarget.object;
     }
 
     return new THREE.Mesh(

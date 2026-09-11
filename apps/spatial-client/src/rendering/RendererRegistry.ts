@@ -12,6 +12,8 @@ const SEMANTIC_MARKER: RendererDescriptor = Object.freeze({
 
 export class RendererRegistry {
   resolve(entityKind: string): RendererDescriptor {
-    return entityKind === 'pc.window' ? APPLICATION_SURFACE : SEMANTIC_MARKER;
+    return entityKind === 'pc.window' || entityKind === 'spatial.surface'
+      ? APPLICATION_SURFACE
+      : SEMANTIC_MARKER;
   }
 }
