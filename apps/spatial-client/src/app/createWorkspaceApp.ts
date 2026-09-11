@@ -27,6 +27,7 @@ import {
   ApplicationSurface,
   ProtocolPresentationSink,
 } from '../surfaces/ApplicationSurface.ts';
+import { openDefaultChatGpt } from '../startup/DefaultApplicationStartup.ts';
 
 export type WorkspaceApp = {
   destroy(): void;
@@ -70,6 +71,18 @@ type InitialSyncSocket = Pick<WorkspaceSocket, 'waitUntilOpen' | 'sendCommand'>;
 export async function initializeWorkspaceConnection(socket: InitialSyncSocket): Promise<void> {
   await socket.waitUntilOpen();
   await socket.sendCommand('application.list');
+}
+
+export async function initializeReadyWorkspace(
+  socket: InitialSyncSocket,
+  onReady: () => void,
+  openDefaultApplication: () => Promise<unknown>,
+): Promise<void> {
+  await initializeWorkspaceConnection(socket);
+  onReady();
+  void openDefaultApplication().catch(() => {
+    // Default application startup is optional and must never fail workspace readiness.
+  });
 }
 
 export function shouldRequestPointerLock(input: {
@@ -234,14 +247,16 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     }),
   ];
 
-  void initializeWorkspaceConnection(socket)
-    .then(() => bridge.post('renderer.ready', { surface: 'spatial', version: 1 }))
-    .catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      coda.setState('needs-attention');
-      coda.showCaption(`Windows Workspace Host is not connected. ${message}`);
-      coda.setState('needs-attention');
-    });
+  void initializeReadyWorkspace(
+    socket,
+    () => bridge.post('renderer.ready', { surface: 'spatial', version: 1 }),
+    () => openDefaultChatGpt(workspaceCommands),
+  ).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    coda.setState('needs-attention');
+    coda.showCaption(`Windows Workspace Host is not connected. ${message}`);
+    coda.setState('needs-attention');
+  });
 
   const reticle = document.createElement('div');
   reticle.className = 'reticle';
