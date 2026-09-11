@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  AGENT_PROVIDER_OPTIONS,
   createInitialCodaPresenceModel,
   reduceCodaPresence,
   submitCodaInstruction,
@@ -86,6 +87,14 @@ test('agent provider preference can cycle independently of voice toggles', () =>
   assert.equal(next.agentProvider, 'SpaceXAI');
   assert.equal(next.microphoneEnabled, true);
   assert.equal(next.proactiveMode, 'CriticalOnly');
+});
+
+test('agent provider selector exposes stable values and honest labels', () => {
+  assert.deepEqual(AGENT_PROVIDER_OPTIONS, [
+    { value: 'Codex', label: 'Codex' },
+    { value: 'SpaceXAI', label: 'SpaceXAI' },
+    { value: 'Cursor', label: 'Cursor (soon)' },
+  ]);
 });
 
 test('typed chat posts the shared agent instruction envelope', () => {
