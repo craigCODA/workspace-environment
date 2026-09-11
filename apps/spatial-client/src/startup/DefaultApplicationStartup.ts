@@ -7,6 +7,7 @@ export type WorkspaceCommandHandler = Readonly<{
 export type DefaultApplicationStartupResult =
   | Readonly<{
       status: 'opened';
+      applicationId: string;
       surfaceEntityId: string | null;
       windowEntityId: string | null;
     }>
@@ -55,6 +56,7 @@ export async function openDefaultChatGpt(
     const openedPayload = record(opened.payload);
     return {
       status: 'opened',
+      applicationId,
       surfaceEntityId: semanticId(openedPayload?.surfaceEntityId, 'spatial.surface:'),
       windowEntityId: semanticId(openedPayload?.windowEntityId, 'pc.window:'),
     };
