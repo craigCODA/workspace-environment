@@ -56,13 +56,19 @@ class WebViewTransport implements NativeMessageTransport {
   }
 }
 
-class BrowserFallbackTransport implements NativeMessageTransport {
+export class BrowserFallbackTransport implements NativeMessageTransport {
   readonly #listeners = new Set<(message: unknown) => void>();
   #destroyed = false;
 
   postMessage(message: unknown): void {
-    if (!isEnvelope(message) || message.type !== 'renderer.ready') return;
-    queueMicrotask(() => this.#welcome());
+    if (!isEnvelope(message)) return;
+    if (message.type === 'renderer.ready') {
+      queueMicrotask(() => this.#welcome());
+      return;
+    }
+    if (message.type === 'agent.instruction') {
+      queueMicrotask(() => this.#reportNativeAgentUnavailable());
+    }
   }
 
   subscribe(listener: (message: unknown) => void): () => void {
@@ -79,6 +85,12 @@ class BrowserFallbackTransport implements NativeMessageTransport {
     if (this.#destroyed) return;
     const envelope: WorkspaceNativeEnvelope = { version: 1, type, payload };
     for (const listener of this.#listeners) listener(envelope);
+  }
+
+  #reportNativeAgentUnavailable(): void {
+    const text = 'Coda’s native agent runtime is unavailable in the Electron/browser fallback. Open the native Workspace Environment build to use ChatGPT (Codex) or Grok.';
+    this.#emit('agent.event', { level: 'error', summary: text });
+    this.#emit('voice.caption', { text, final: true, utteranceId: 'native-agent-unavailable' });
   }
 
   #welcome(): void {
