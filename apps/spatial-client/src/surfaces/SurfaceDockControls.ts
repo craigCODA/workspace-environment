@@ -57,12 +57,12 @@ export class SurfaceDockControls {
   constructor(root: HTMLElement, options: SurfaceDockControlsOptions) {
     this.#options = options;
     this.#element = document.createElement('nav');
-    this.#element.className = 'surface-dock-controls';
+    this.#element.className = 'surface-dock-controls chatgpt-surface-controls';
     this.#element.setAttribute('aria-label', `${options.label} surface controls`);
     this.#element.hidden = true;
 
     const label = document.createElement('span');
-    label.className = 'surface-dock-label';
+    label.className = 'surface-dock-label chatgpt-surface-label';
     label.textContent = options.label;
 
     this.#primaryButton = document.createElement('button');
