@@ -120,6 +120,18 @@ Verified on 2026-09-09 on the same Windows 11 machine:
 
 The verified installer is `dist\Workspace Environment Setup 0.1.0.exe` (141,279,423 bytes), with SHA-256 `3FA4F4FB9AAB043D4B9C20879A23DFEB9903508CC38CCC3BFD751149C7F87CA2`. It is intentionally unsigned for this slice.
 
+## Interaction baseline acceptance
+
+The current interaction baseline adds explicit pointer ownership and compact agent controls without changing the Windows surface authority model.
+
+Verify these behaviors on an interactive Windows desktop:
+
+1. Hover a live application surface. The operating-system cursor remains visible while the in-world surface cursor and normalized Windows pointer routing continue to update.
+2. Click the primary mouse button on empty workspace. Pointer Lock engages, the native cursor hides, and relative mouse movement rotates the camera without holding a mouse button.
+3. Press `Escape`. The browser releases Pointer Lock, the native cursor returns, and normal Coda/application-surface interaction resumes.
+4. Restart the app. Coda starts compact with its chat and activity panels collapsed while the beacon, voice state, and controls remain available.
+5. Open the **Agent** selector. `Codex`, `SpaceXAI`, and `Cursor (soon)` are visible. Changing the selection uses the existing `agentProvider` preference path; Cursor retains its current compatibility/fallback runtime behavior.
+
 ## V0 boundaries
 
 V0 is deliberately narrow:
