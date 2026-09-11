@@ -19,9 +19,11 @@ Direct Git cloning was unavailable in the authoring environment. Branch and docu
 
 ## First implementation gate
 
-The owner reviews the written specification, especially sections 9 through 13: concurrent edits, constraints, execution isolation, hot replacement, and live behavior. After approval, the next artifact is the M1 implementation plan with executable failure tests.
+The owner reviews the written specification, especially the world command surface, runtime/renderer boundary, direct-manipulation authority, package lifecycle, and milestone acceptance matrix. After approval, the next artifact is the M1 implementation plan with executable failure tests.
 
-M1 proves a runtime-authored object in arbitrary 3D space, authoritative user placement during a rebuild, save/reload, and recovery from bad code. It is intentionally testable without a live model account. The full product is built in subsequent vertical slices.
+M1 is broader than a single runtime-authored object demo. It must prove the host-owned world/command boundary, model-independent direct editing, isolated guest execution, the descriptor pipeline with the A47 creative-resource kind matrix, revision-safe hot replacement, stable semantic picking/references, authored state persistence, save/reload, resource-budget failure recovery, and the explicit M1 security fixtures. Guest code does not import Three.js, and M1 does not claim general constraints, AI authoring, multi-package/multi-tenant offender isolation, or the full Windows product migration.
+
+M2 then proves the two declared host constraint operators/bindings plus generic live behavior and interaction-mode semantics. OpenCode authoring is M3, and real Windows-product integration, remembered grants, reusable assembly import/export, and voice are M4. The full milestone claims and acceptance IDs live in §18–§19 of the specification.
 
 ## Working rules
 
