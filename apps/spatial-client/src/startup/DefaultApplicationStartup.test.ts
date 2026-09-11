@@ -31,13 +31,21 @@ test('resolved ChatGPT search opens the stable application with reuseOrLaunch', 
     {
       id: 'startup-chatgpt-open',
       ok: true,
-      payload: { disposition: 'reused', surfaceEntityId: 'spatial.surface:chatgpt' },
+      payload: {
+        disposition: 'reused',
+        surfaceEntityId: 'spatial.surface:chatgpt',
+        windowEntityId: 'pc.window:chatgpt',
+      },
     },
   );
 
   const result = await openDefaultChatGpt(handler);
 
-  assert.equal(result.status, 'opened');
+  assert.deepEqual(result, {
+    status: 'opened',
+    surfaceEntityId: 'spatial.surface:chatgpt',
+    windowEntityId: 'pc.window:chatgpt',
+  });
   assert.deepEqual(handler.requests, [
     {
       id: 'startup-chatgpt-search',
@@ -50,6 +58,31 @@ test('resolved ChatGPT search opens the stable application with reuseOrLaunch', 
       args: { applicationId: 'pc.application:chatgpt', launchPolicy: 'reuseOrLaunch' },
     },
   ]);
+});
+
+test('opened ChatGPT tolerates a host that omits optional semantic ids', async () => {
+  const handler = new FakeHandler(
+    {
+      id: 'startup-chatgpt-search',
+      ok: true,
+      payload: {
+        status: 'resolved',
+        application: { id: 'pc.application:chatgpt', displayName: 'ChatGPT' },
+        candidates: [],
+      },
+    },
+    {
+      id: 'startup-chatgpt-open',
+      ok: true,
+      payload: { disposition: 'launched' },
+    },
+  );
+
+  assert.deepEqual(await openDefaultChatGpt(handler), {
+    status: 'opened',
+    surfaceEntityId: null,
+    windowEntityId: null,
+  });
 });
 
 test('missing or ambiguous ChatGPT performs no open', async () => {
