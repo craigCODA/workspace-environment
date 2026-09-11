@@ -10,6 +10,10 @@ export type ChatGptPresentationControllerOptions = Readonly<{
   commit(surfaceEntityId: string, presentation: PresentationState): Promise<void>;
 }>;
 
+function zero(value: number): number {
+  return Object.is(value, -0) ? 0 : value;
+}
+
 export function dockedPresentationFor(camera: CameraPose): PresentationState {
   const depth = 2.4;
   const rightOffset = 0.95;
@@ -33,10 +37,10 @@ export function dockedPresentationFor(camera: CameraPose): PresentationState {
   return {
     position,
     rotation: {
-      x: Math.cos(halfYaw) * Math.sin(halfPitch),
-      y: Math.sin(halfYaw) * Math.cos(halfPitch),
-      z: -Math.sin(halfYaw) * Math.sin(halfPitch),
-      w: Math.cos(halfYaw) * Math.cos(halfPitch),
+      x: zero(Math.cos(halfYaw) * Math.sin(halfPitch)),
+      y: zero(Math.sin(halfYaw) * Math.cos(halfPitch)),
+      z: zero(-Math.sin(halfYaw) * Math.sin(halfPitch)),
+      w: zero(Math.cos(halfYaw) * Math.cos(halfPitch)),
     },
     size: { x: 1.05, y: 1.8, z: 0.035 },
   };
