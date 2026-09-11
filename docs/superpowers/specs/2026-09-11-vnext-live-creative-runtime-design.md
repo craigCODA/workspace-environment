@@ -298,13 +298,15 @@ projectedAngleAboutAxis
 
 No guest JavaScript, `eval`, model call, or per-frame guest callback executes on the pointer-move path. Adding a new host mapping operator is a shipped Runtime/World Core change with its own tests. Packages remain extensible by applying and composing the published declaration contract to arbitrary package-owned handles/parameters; they do not extend the trusted operator implementation at runtime.
 
-For the first A05 fixture, resolve the board's east end once to a stable end handle and world anchor. The opposite handle maps through `projectedDistanceAlongAxis` against the board's declared local length axis. Its projected distance determines the authored length; the midpoint/root adjustment preserves the pinned end. Thickness and height remain unchanged unless explicitly included. A minimum positive length prevents inversion. The pinned end's world position is checked numerically after each accepted edit.
+Constraint declarations that need continuous visual feedback also publish **trusted parameter bindings** from authored parameter IDs to a closed set of safe descriptor fields, such as primitive dimensions, package-owned local transforms, or validated material/shader uniforms. Interaction computes the preview parameter through the host mapping operator; the trusted renderer/runtime applies the corresponding parameter binding directly. The guest is not called to redraw each pointer sample. If a package needs a complex topology regeneration outside the binding set, guest regeneration may catch up asynchronously or after the edit boundary, but it cannot define, block, or override the live pointer mapping. M2's A05 fixtures use only trusted bindings.
 
-The second A05 fixture is intentionally a different mechanism use: a pinned hinge/lever exposes an angular handle and maps it through `projectedAngleAboutAxis` to an authored angle parameter with declared limits. The passing record names the same constraint declaration schema plus the specific operator ID; it does not treat "board" or "lever" as the mechanism.
+For the first A05 fixture, resolve the board's east end once to a stable end handle and world anchor. The opposite handle maps through `projectedDistanceAlongAxis` against the board's declared local length axis. Its projected distance determines the authored length; a trusted dimension/root binding provides the live visual preview while preserving the pinned end. Thickness and height remain unchanged unless explicitly included. A minimum positive length prevents inversion. The pinned end's world position is checked numerically after each accepted edit.
+
+The second A05 fixture is intentionally a different mechanism use: a pinned hinge/lever exposes an angular handle and maps it through `projectedAngleAboutAxis` to an authored angle parameter with declared limits. A trusted package-owned local-rotation binding applies the live lever angle. The passing record names the same constraint declaration schema, the specific operator ID, and the descriptor binding kind; it does not treat "board" or "lever" as the mechanism.
 
 Locking a point does not automatically lock a whole face or orientation. A face lock is a different declared constraint. World-axis words and local-axis operations retain their declared reference frame after an object rotates. The solver never guesses a new "east end" during an active drag.
 
-Spline/cage deformation, arbitrary vertex constraints, conflicting multi-pin systems, inverse kinematics, and physical simulation require later host operators/solvers and dedicated acceptance work. Passing A05 proves the declaration/operator architecture and the two named mappings. It never establishes a universal CAD solver.
+Spline/cage deformation, arbitrary vertex constraints, conflicting multi-pin systems, inverse kinematics, and physical simulation require later host operators/solvers and dedicated acceptance work. Passing A05 proves the declaration/operator/binding architecture and the two named mappings. It never establishes a universal CAD solver.
 
 ## 11. Creative execution and rendering
 
@@ -314,14 +316,14 @@ The default execution path runs package JavaScript in an isolated guest engine, 
 
 The worker adds responsiveness and termination control; the guest engine and its imports provide the execution boundary. A plain Worker or node:vm is not accepted as the security argument. Node's documentation explicitly rules out treating node:vm as a security mechanism. [T2]
 
-**Three.js does not run inside the guest package.** `import "three"` fails in the M1–M2 guest profile unless a future reviewed compatibility shim converts that API into the same constrained descriptor protocol. Three.js and the WebGL/WebGPU renderer live only in the trusted Scene Renderer.
+**Three.js does not run inside the guest package.** `import "three"` fails in the default guest profile at every milestone. A future reviewed compatibility shim may expose familiar Three.js-shaped calls only if it translates them into the same constrained descriptor protocol; the real Three.js module and WebGL/WebGPU renderer still remain exclusively in the trusted Scene Renderer.
 
-The guest SDK builds typed, versioned resource descriptors and update commands. The trusted runtime validates package ownership, schema, resource budgets, asset authority, and generation tokens before forwarding accepted descriptors to the renderer. The renderer converts them into Three.js resources. Guest output never passes an executable callback/function object into the trusted renderer.
+The guest SDK builds typed, versioned resource descriptors and resource-update messages. These are renderer-resource requests, not World Core mutation commands. The trusted runtime validates package ownership, schema, resource budgets, asset authority, and generation tokens before forwarding accepted descriptors to the renderer. The renderer converts them into Three.js resources. Guest output never passes an executable callback/function object into the trusted renderer.
 
 ```text
 guest package
   -> Workspace Creative SDK
-  -> typed descriptors / bounded updates
+  -> typed descriptors / bounded resource updates
   -> trusted validation + ownership mapping
   -> trusted Three.js renderer
 ```
@@ -360,7 +362,7 @@ Shader execution can exhaust or wedge a GPU despite JavaScript isolation. Test c
 
 A package includes a manifest, editable source, package-local locked dependency versions, owned assets with provenance, parameter/state schema, stable handle declarations, constraint/observation declarations, and requested capabilities. SDK, package-state, and renderer-profile compatibility are explicit. Hashes detect content changes; hashes alone do not establish trust.
 
-For M1–M2, guest code may import only the versioned Workspace Creative SDK and dependencies resolved from that package's own approved lock/allowlist. Guest-to-guest executable imports are forbidden. One package may reference another entity through durable world relationships/grants, but it cannot import another package's executable module or share a global npm-style dependency environment. A future guest-to-guest module system is M5+ work and must satisfy A54 before it is enabled.
+Until an M5+ guest-to-guest executable module design is explicitly accepted, guest code may import only the versioned Workspace Creative SDK and dependencies resolved from that package's own approved lock/allowlist. Guest-to-guest executable imports are forbidden through M1–M4. One package may reference another entity through durable world relationships/grants, but it cannot import another package's executable module or share a global npm-style dependency environment. Any future guest-to-guest module system must satisfy A54 before it is enabled.
 
 The publication pipeline is:
 
@@ -473,13 +475,15 @@ Trusted recovery controls live outside package-authored UI. A package cannot app
 
 Interactive picking, selection, root transforms, ordinary parameter edits, edit-lease handling, and M2 host constraint operators run without a model call and without executing guest JavaScript on pointer/controller movement. Cached package instantiation and ordinary playback also do not require a model. Model generation is reserved for creating/revising implementations or genuinely ambiguous intent.
 
+For M2 constrained drags, the trusted Interaction / World Core operator maps input to a preview/accepted authored parameter and the trusted descriptor parameter-binding path applies the supported visual field update. The pointer loop does not wait for QuickJS. Complex geometry that cannot be represented by the accepted binding set may regenerate asynchronously or at the edit boundary; that lag does not grant guest code control of the pointer mapping.
+
 Guest JavaScript runs only through budgeted authoring/activation work, observation/event delivery, explicit SDK timers, and scheduled procedural ticks. Those ticks are decoupled from the pointer-move path and cannot write leased fields. A slow or terminated guest can freeze its own procedural effect without making an active drag wait for it.
 
 The render loop never waits for OpenCode, TTS, a package compile, a guest response, or a network request. Batch accepted changes and transferable geometry buffers. Share immutable assets. Schedule observers only for relevant changes; bound polling and timer frequency. Large groups can use instanced rendering while maintaining logical instance IDs for selection and overrides where the selected acceptance profile supports them.
 
 Reuse approved package code and compile-cache entries by digest. Direct edits operate on durable instance parameters/state rather than regenerating source for every numeric change. Source regeneration happens only when the package implementation actually needs to change.
 
-Record input-to-preview latency, host acknowledgement latency, constraint-operator latency, guest tick/runtime latency, compile duration, model latency, time-to-first-audio, CPU time, memory, GPU resource counts, and reload cleanup. Use named benchmark fixtures and hardware records. Initial budgets are set from the first measured proof and versioned with the tests; this specification does not invent a universal frame-rate claim.
+Record input-to-preview latency, host acknowledgement latency, constraint-operator latency, trusted parameter-binding latency, guest tick/runtime latency, compile duration, model latency, time-to-first-audio, CPU time, memory, GPU resource counts, and reload cleanup. Use named benchmark fixtures and hardware records. Initial budgets are set from the first measured proof and versioned with the tests; this specification does not invent a universal frame-rate claim.
 
 Keep development work small enough to inspect. Every code change names its owning module, public contract impact, tests, and recovery effect. Reuse existing passing tests and add regression tests at real boundaries. Mock providers for quota-independent automation; reserve live-provider checks for an explicitly selected account/model.
 
@@ -493,9 +497,9 @@ These are architectural milestones, not an instruction to implement the whole tr
 
 The allowed M1 claim is: **Workspace has a persistent, manipulable, model-independent live-package runtime with low-level scene descriptor expressiveness, authoritative host state, isolated guest execution, and revision-safe recovery for the mechanisms explicitly tested.** It is not yet a general constraint solver, AI authoring system, complete Windows product migration, or full Three.js API sandbox.
 
-**M2: Deterministic constraints, interaction modes, and live behavior.** Prove package-declared constraints through the closed host mapping-operator contract, with A05 requiring both `projectedDistanceAlongAxis` (pinned board stretch) and `projectedAngleAboutAxis` (pinned hinge/lever angle). No guest JS runs on pointer movement. Add constraint×regeneration handling (A25), rotated-frame correctness (A45), Build/Edit/Use separation (A44), independent-revision undo (A56), concurrent/cancelled interaction intents, and device-neutral synthetic controller semantics. Prove generic observations/custom events/compound predicates, bounded feedback/cancellation, pause/resume/delete behavior, and cross-entity behavior references/grants. A12/A28/A29 records must name the observation/event APIs rather than the demo rule. M1–M2 continue to forbid guest-to-guest executable imports. Reusable assembly library export remains M4/A14, not an M2 claim.
+**M2: Deterministic constraints, interaction modes, and live behavior.** Prove package-declared constraints through the closed host mapping-operator plus trusted parameter-binding contracts, with A05 requiring both `projectedDistanceAlongAxis` (pinned board stretch) and `projectedAngleAboutAxis` (pinned hinge/lever angle). No guest JS runs on pointer movement. Add constraint×regeneration handling (A25), rotated-frame correctness (A45), Build/Edit/Use separation (A44), independent-revision undo (A56), concurrent/cancelled interaction intents, and device-neutral synthetic controller semantics. Prove generic observations/custom events/compound predicates, bounded feedback/cancellation, pause/resume/delete behavior, and cross-entity behavior references/grants. A12/A28/A29 records must name the observation/event APIs rather than the demo rule. Guest-to-guest executable imports remain forbidden through M4. Reusable assembly library export remains M4/A14, not an M2 claim.
 
-The allowed M2 claim is: **Packages can declare and use the tested host constraint operators and define live behavior from generic observations/events while direct editing remains authoritative and model-free.** Passing A05 does not establish spline/cage/multi-pin physics or a universal CAD solver.
+The allowed M2 claim is: **Packages can declare and use the tested host constraint operators and trusted descriptor bindings, and define live behavior from generic observations/events, while direct editing remains authoritative and model-free.** Passing A05 does not establish spline/cage/multi-pin physics or a universal CAD solver.
 
 **M3: Private Coda/OpenCode authoring.** Bundle and isolate the Workspace-private OpenCode runtime, expose an accurate engine/provider/model selector, connect a user-selected available provider, and have Coda create/revise packages through the same draft, compile, validation, command, descriptor, and activation contracts used by manual packages. Prove private-vs-personal runtime isolation, quota/auth failure behavior, prompt/context injection resistance, model prose not substituting for host activation acknowledgement, provider/model independence, and two concurrent authoring-job reconciliation (A58). Generated package code still never executes inside OpenCode's credential-bearing process.
 
@@ -552,7 +556,7 @@ Schema/property/contract tests support these scenarios. They do not replace inst
 
 | ID | Scenario | Passing evidence |
 | --- | --- | --- |
-| A05 | Two declarative constraint mappings | Fixture 1: pinned board uses `projectedDistanceAlongAxis` to drive length while pin/thickness remain correct and undo restores shape. Fixture 2: pinned hinge/lever uses `projectedAngleAboutAxis` to drive bounded angle. Both publish only handles/axes/limits/parameter IDs/operator ID; record declaration contract + operator ID; no guest JS/eval/per-frame callback |
+| A05 | Two declarative constraint mappings | Fixture 1: pinned board declares `projectedDistanceAlongAxis` plus trusted dimension/root bindings to drive length while pin/thickness remain correct and undo restores shape. Fixture 2: pinned hinge/lever declares `projectedAngleAboutAxis` plus a trusted local-rotation binding to drive bounded angle. Both publish only stable handles/axes/limits/parameter IDs/operator ID/binding declarations; record declaration contract, operator ID, and binding kind; no guest JS/eval/per-frame callback |
 | A12 | Add a crossing/time rule and modify it live | Correct edge/timer semantics and no duplicate storm; record generic observation/timer APIs, not a named host trigger |
 | A21 | Send desktop and synthetic controller manipulation intents | Same begin/update/end/cancel host command semantics; hardware VR acceptance remains separate |
 | A25 | Constraint drag under live regeneration | Pin/stretch while package hot-replaces relevant geometry; stable handle mapping, pin holds, current user parameter wins, and no cursor/hand jump |
@@ -597,7 +601,7 @@ Schema/property/contract tests support these scenarios. They do not replace inst
 | A38 | Offender quarantine among many packages | Multiple healthy packages plus one CPU/resource offender; only offender is quarantined where isolation permits, healthy package state remains, and resource attribution is visible |
 | A48 | GLB honesty versus Workspace export | Same creation exported both ways; GLB is explicitly geometry/material exchange and does not claim behavior/permission fidelity; Workspace export/reimport preserves the supported rich representation |
 | A49 | Instanced draw with per-instance semantic identity at scale | Large instanced group remains efficient while selecting one/matching selected peers preserves logical instance IDs and overrides according to declared scale limits |
-| A54 | Dependency-version isolation before guest-to-guest imports | M1–M2 import attempts between guest packages are rejected. Before any future executable guest dependency sharing is enabled, incompatible dependency-version fixtures prove reproducible isolated resolution; no global npm-style environment silently mutates another package |
+| A54 | Dependency-version isolation before guest-to-guest imports | M1–M4 import attempts between guest packages are rejected. Before any future executable guest dependency sharing is enabled, incompatible dependency-version fixtures prove reproducible isolated resolution; no global npm-style environment silently mutates another package |
 
 ### Milestone claim discipline
 
