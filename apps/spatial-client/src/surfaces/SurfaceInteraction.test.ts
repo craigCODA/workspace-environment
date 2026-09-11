@@ -169,6 +169,24 @@ test('application surface geometry lets persistent presentation own its displaye
   target.dispose();
 });
 
+test('texture target maps hover UV onto a visible surface cursor and can hide it', () => {
+  const target = new ThreeSurfaceTextureTarget();
+
+  assert.equal(target.cursorVisible, false);
+
+  target.setCursor(0.75, 0.25);
+  assert.equal(target.cursorVisible, true);
+  assert.deepEqual(
+    { x: target.cursorPosition.x, y: target.cursorPosition.y },
+    { x: 0.25, y: -0.25 },
+  );
+
+  target.setCursor(null);
+  assert.equal(target.cursorVisible, false);
+
+  target.dispose();
+});
+
 test('presentation sink sends the complete presentation through semantic identity', async () => {
   const commands: Array<{ operation: string; target?: string; payload?: unknown }> = [];
   const presentation: PresentationState = {

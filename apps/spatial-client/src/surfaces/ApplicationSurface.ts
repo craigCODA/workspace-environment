@@ -14,6 +14,7 @@ export interface SurfaceTextureTarget {
   update(frame: SurfaceFrame): Promise<void> | void;
   markUnavailable(): void;
   setPresentation?(presentation: PresentationState): void;
+  setCursor?(u: number | null, v?: number): void;
   dispose(): void;
 }
 
@@ -47,8 +48,10 @@ export type ApplicationSurfaceOptions = {
 
 export class ThreeSurfaceTextureTarget implements SurfaceTextureTarget {
   readonly object: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  readonly #cursor: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
   #bitmap: ImageBitmap | null = null;
   #disposed = false;
+  #cursorVisible = false;
 
   constructor() {
     this.object = new THREE.Mesh(
@@ -59,6 +62,53 @@ export class ThreeSurfaceTextureTarget implements SurfaceTextureTarget {
         toneMapped: false,
       }),
     );
+    this.#cursor = new THREE.Mesh(
+      new THREE.CircleGeometry(0.018, 20),
+      new THREE.MeshBasicMaterial({
+        color: 0xf0eee6,
+        transparent: true,
+        opacity: 0.92,
+        depthTest: false,
+        toneMapped: false,
+      }),
+    );
+    this.#cursor.position.z = 0.02;
+    this.#cursor.visible = false;
+    this.#cursor.renderOrder = 2;
+    this.object.add(this.#cursor);
+  }
+
+  get cursorVisible(): boolean {
+    return this.#cursorVisible;
+  }
+
+  get cursorPosition(): Readonly<{ x: number; y: number }> {
+    return { x: this.#cursor.position.x, y: this.#cursor.position.y };
+  }
+
+  setCursor(uv: Readonly<{ u: number; v: number }> | null): void;
+  setCursor(u: number | null, v?: number): void;
+  setCursor(
+    uvOrU: Readonly<{ u: number; v: number }> | number | null,
+    v?: number,
+  ): void {
+    if (this.#disposed) return;
+    if (uvOrU === null) {
+      this.#cursorVisible = false;
+      this.#cursor.visible = false;
+      return;
+    }
+    const u = typeof uvOrU === 'number' ? uvOrU : uvOrU.u;
+    const nextV = typeof uvOrU === 'number' ? v : uvOrU.v;
+    if (typeof u !== 'number' || typeof nextV !== 'number' || !Number.isFinite(u) || !Number.isFinite(nextV)) {
+      this.#cursorVisible = false;
+      this.#cursor.visible = false;
+      return;
+    }
+    this.#cursor.position.x = u - 0.5;
+    this.#cursor.position.y = nextV - 0.5;
+    this.#cursorVisible = true;
+    this.#cursor.visible = true;
   }
 
   async update(frame: SurfaceFrame): Promise<void> {
@@ -102,6 +152,11 @@ export class ThreeSurfaceTextureTarget implements SurfaceTextureTarget {
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#cursorVisible = false;
+    this.#cursor.visible = false;
+    this.#cursor.geometry.dispose();
+    this.#cursor.material.dispose();
+    this.object.remove(this.#cursor);
     this.#disposeTexture();
   }
 
@@ -227,6 +282,10 @@ export class ApplicationSurface {
   text(value: string): Promise<unknown> {
     if (!this.isBound) return Promise.resolve();
     return this.#requireInput().text(value);
+  }
+
+  setCursor(u: number | null, v?: number): void {
+    this.#textureTarget.setCursor?.(u, v);
   }
 
   previewPresentation(presentation: PresentationState): void {

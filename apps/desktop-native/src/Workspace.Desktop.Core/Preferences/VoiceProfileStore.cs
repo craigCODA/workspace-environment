@@ -11,9 +11,7 @@ public sealed class VoiceProfileStore
     public async Task<VoiceProfile> LoadAsync(CancellationToken cancellationToken = default)
     {
         var profile = await _store.LoadOrDefaultAsync(() => VoiceProfile.Default, cancellationToken);
-        return profile.SchemaVersion == VoiceProfile.CurrentSchemaVersion
-            ? profile
-            : VoiceProfile.Default;
+        return VoiceProfile.Migrate(profile);
     }
 
     public Task SaveAsync(VoiceProfile profile, CancellationToken cancellationToken = default)

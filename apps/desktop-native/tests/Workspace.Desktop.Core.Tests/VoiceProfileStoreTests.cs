@@ -61,6 +61,52 @@ public sealed class VoiceProfileStoreTests : IDisposable
         Assert.Single(Directory.GetFiles(_tempDirectory, "voice-profile.json.corrupt-*"));
     }
 
+    [Fact]
+    public async Task SchemaV1ProfilesMigrateToCodexProviderDefault()
+    {
+        var path = Path.Combine(_tempDirectory, "voice-profile.json");
+        await File.WriteAllTextAsync(path, """
+            {
+              "SchemaVersion": 1,
+              "PreferredName": "Craig",
+              "OnboardingCompleted": true,
+              "MicrophoneEnabled": true,
+              "CaptionsEnabled": false,
+              "TranscriptRetentionEnabled": true,
+              "ProactiveMode": "Quiet",
+              "NavigationMode": "AskFirst",
+              "WakePhrase": "Hey Coda"
+            }
+            """);
+
+        var loaded = await new VoiceProfileStore(path).LoadAsync();
+
+        Assert.Equal(VoiceProfile.CurrentSchemaVersion, loaded.SchemaVersion);
+        Assert.Equal("Craig", loaded.PreferredName);
+        Assert.True(loaded.OnboardingCompleted);
+        Assert.False(loaded.CaptionsEnabled);
+        Assert.True(loaded.TranscriptRetentionEnabled);
+        Assert.Equal(ProactiveSpeechMode.Quiet, loaded.ProactiveMode);
+        Assert.Equal(AgentProvider.Codex, loaded.AgentProvider);
+    }
+
+    [Fact]
+    public async Task ReturningProfilePreservesAgentProvider()
+    {
+        var path = Path.Combine(_tempDirectory, "voice-profile.json");
+        var store = new VoiceProfileStore(path);
+        await store.SaveAsync(VoiceProfile.Default with
+        {
+            PreferredName = "Craig",
+            OnboardingCompleted = true,
+            AgentProvider = AgentProvider.SpaceXAI,
+        });
+
+        var loaded = await new VoiceProfileStore(path).LoadAsync();
+
+        Assert.Equal(AgentProvider.SpaceXAI, loaded.AgentProvider);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_tempDirectory)) Directory.Delete(_tempDirectory, recursive: true);

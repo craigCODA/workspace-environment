@@ -5,6 +5,8 @@ import { SceneReplicaSynchronizer } from '../replica/SceneReplicaSynchronizer.ts
 import { WorkspaceScene } from '../rendering/WorkspaceScene.ts';
 import {
   CodaPresence,
+  AGENT_PROVIDERS,
+  type AgentProvider,
   type CodaState,
   type ProactiveMode,
 } from '../onboarding/CodaPresence.ts';
@@ -92,6 +94,8 @@ const PROACTIVE_MODES = new Set<ProactiveMode>([
   'Quiet',
   'Custom',
 ]);
+
+const AGENT_PROVIDER_SET = new Set<AgentProvider>(AGENT_PROVIDERS);
 
 export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   const originalClassName = root.className;
@@ -182,6 +186,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     bridge.subscribe('preference.changed', (message) => {
       const payload = payloadRecord(message);
       const proactiveMode = payload.proactiveMode;
+      const agentProvider = payload.agentProvider;
       coda.setPreferences({
         microphoneEnabled: typeof payload.microphoneEnabled === 'boolean'
           ? payload.microphoneEnabled
@@ -195,6 +200,10 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
         proactiveMode: typeof proactiveMode === 'string'
           && PROACTIVE_MODES.has(proactiveMode as ProactiveMode)
           ? proactiveMode as ProactiveMode
+          : undefined,
+        agentProvider: typeof agentProvider === 'string'
+          && AGENT_PROVIDER_SET.has(agentProvider as AgentProvider)
+          ? agentProvider as AgentProvider
           : undefined,
       });
     }),
@@ -252,6 +261,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
   } | null = null;
   let lastX = 0;
   let lastY = 0;
+  let hoveredSurface: ApplicationSurface | null = null;
 
   const reportInputError = (error: unknown): void => {
     const message = error instanceof Error ? error.message : String(error);
@@ -269,6 +279,33 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     target instanceof Element
       && target.closest('.coda-chat, .coda-controls, .coda-terminal, .coda-transcript') !== null;
 
+  const clearSurfaceHover = (): void => {
+    if (hoveredSurface) {
+      hoveredSurface.setCursor(null);
+      hoveredSurface = null;
+    }
+    root.classList.remove('is-surface-hover');
+  };
+
+  const updateSurfaceHover = (clientX: number, clientY: number): void => {
+    if (isCodaInteractiveTarget(document.elementFromPoint(clientX, clientY))) {
+      clearSurfaceHover();
+      return;
+    }
+    const hit = scene.hitTestApplicationSurface(clientX, clientY);
+    if (!hit || !hit.surface.isBound) {
+      clearSurfaceHover();
+      return;
+    }
+    if (hoveredSurface && hoveredSurface !== hit.surface) {
+      hoveredSurface.setCursor(null);
+    }
+    hoveredSurface = hit.surface;
+    hit.surface.setCursor(hit.u, hit.v);
+    root.classList.add('is-surface-hover');
+    void hit.surface.pointer('move', hit.u, hit.v).catch(reportInputError);
+  };
+
   const onPointerDown = (event: PointerEvent): void => {
     if (isCodaInteractiveTarget(event.target)) return;
     sceneCommands.cancel('manual-pointer');
@@ -279,6 +316,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
         : null;
     const hit = button ? scene.hitTestApplicationSurface(event.clientX, event.clientY) : null;
     if (hit && button === 'primary' && event.altKey) {
+      clearSurfaceHover();
       selectedSurface = hit.surface;
       selectedEntityId = hit.entityId;
       root.classList.add('has-selected-surface', 'is-presentation-drag');
@@ -303,6 +341,10 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
         event.preventDefault();
         return;
       }
+      clearSurfaceHover();
+      hit.surface.setCursor(hit.u, hit.v);
+      hoveredSurface = hit.surface;
+      root.classList.add('is-surface-hover');
       surfacePointer = {
         pointerId: event.pointerId,
         surface: hit.surface,
@@ -317,6 +359,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       return;
     }
 
+    clearSurfaceHover();
     selectedSurface = null;
     selectedEntityId = null;
     root.classList.remove('has-selected-surface');
@@ -362,14 +405,19 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       if (hit) {
         surfacePointer.u = hit.u;
         surfacePointer.v = hit.v;
+        hit.surface.setCursor(hit.u, hit.v);
         void hit.surface.pointer('move', hit.u, hit.v).catch(reportInputError);
       }
       return;
     }
-    if (event.pointerId !== pointerId) return;
-    sceneCommands.manualLook(event.clientX - lastX, event.clientY - lastY);
-    lastX = event.clientX;
-    lastY = event.clientY;
+    if (pointerId !== null) {
+      if (event.pointerId !== pointerId) return;
+      sceneCommands.manualLook(event.clientX - lastX, event.clientY - lastY);
+      lastX = event.clientX;
+      lastY = event.clientY;
+      return;
+    }
+    updateSurfaceHover(event.clientX, event.clientY);
   };
 
   const endLook = (event: PointerEvent): void => {
@@ -535,6 +583,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
 
   return {
     destroy(): void {
+      clearSurfaceHover();
       workspaceCommandResults.destroy();
       unsubscribe();
       for (const unsubscribeMessage of unsubscribeNative) unsubscribeMessage();

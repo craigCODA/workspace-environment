@@ -15,6 +15,7 @@ const initial: CodaPresenceModel = {
   terminalVisible: false,
   chatVisible: true,
   proactiveMode: 'CriticalOnly',
+  agentProvider: 'Codex',
   terminalEvents: [],
 };
 
@@ -65,6 +66,17 @@ test('chat can be collapsed without changing voice preferences', () => {
 
   assert.equal(next.chatVisible, false);
   assert.equal(next.microphoneEnabled, true);
+});
+
+test('agent provider preference can cycle independently of voice toggles', () => {
+  const next = reduceCodaPresence(initial, {
+    type: 'preferences',
+    agentProvider: 'SpaceXAI',
+  });
+
+  assert.equal(next.agentProvider, 'SpaceXAI');
+  assert.equal(next.microphoneEnabled, true);
+  assert.equal(next.proactiveMode, 'CriticalOnly');
 });
 
 test('typed chat posts the shared agent instruction envelope', () => {

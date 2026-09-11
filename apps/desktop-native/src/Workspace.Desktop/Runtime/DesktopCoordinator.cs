@@ -33,7 +33,7 @@ public sealed class DesktopCoordinator :
     private VoiceProfile _profile = VoiceProfile.Default;
     private CapabilityBroker? _capabilities;
     private VoiceConversationController? _voice;
-    private CodexAppServerClient? _agent;
+    private ICodingAgent? _agent;
     private WorkspaceActionOrchestrator? _workspaceActions;
     private PendingApproval? _pendingApproval;
     private IReadOnlyList<SceneDirective>? _pendingNavigation;
@@ -112,17 +112,9 @@ public sealed class DesktopCoordinator :
 
     private async Task StartAgentAsync(CancellationToken cancellationToken)
     {
-        var capabilities = _capabilities
-            ?? throw new InvalidOperationException("The capability broker is unavailable.");
         var sourceRoot = _sourceRoot
             ?? throw new InvalidOperationException("The source root is unavailable.");
-        _agent = new CodexAppServerClient((root, sandbox) => sandbox switch
-        {
-            AgentSandbox.ReadOnly => true,
-            AgentSandbox.WorkspaceWrite => capabilities.IsGranted("agent.workspace-write", root),
-            AgentSandbox.DangerFullAccess => capabilities.IsGranted("agent.full-access", root),
-            _ => false,
-        });
+        _agent = CreateCodingAgent(_profile.AgentProvider);
         _agentEvents = PumpAgentEventsAsync(_agent, _lifetime.Token);
         await _agent.StartAsync(cancellationToken);
         await _agent.StartOrResumeThreadAsync(
@@ -130,6 +122,52 @@ public sealed class DesktopCoordinator :
             threadId: null,
             AgentSandbox.ReadOnly,
             cancellationToken);
+    }
+
+    private async Task<bool> RestartAgentAsync(CancellationToken cancellationToken)
+    {
+        if (_agent is not null)
+        {
+            await _agent.DisposeAsync();
+            _agent = null;
+        }
+        _agentEvents = null;
+        _agentTurnActive = false;
+        try
+        {
+            await StartAgentAsync(cancellationToken);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            AddTerminalEvent($"Agent restart failed: {exception.Message}");
+            await SpeakAsync("I could not start that agent provider yet.");
+            return false;
+        }
+    }
+
+    private ICodingAgent CreateCodingAgent(AgentProvider provider)
+    {
+        var capabilities = _capabilities
+            ?? throw new InvalidOperationException("The capability broker is unavailable.");
+        return provider switch
+        {
+            AgentProvider.SpaceXAI => new SpaceXAICodingAgent(),
+            AgentProvider.Cursor => new CodexAppServerClient((root, sandbox) => sandbox switch
+            {
+                AgentSandbox.ReadOnly => true,
+                AgentSandbox.WorkspaceWrite => capabilities.IsGranted("agent.workspace-write", root),
+                AgentSandbox.DangerFullAccess => capabilities.IsGranted("agent.full-access", root),
+                _ => false,
+            }),
+            _ => new CodexAppServerClient((root, sandbox) => sandbox switch
+            {
+                AgentSandbox.ReadOnly => true,
+                AgentSandbox.WorkspaceWrite => capabilities.IsGranted("agent.workspace-write", root),
+                AgentSandbox.DangerFullAccess => capabilities.IsGranted("agent.full-access", root),
+                _ => false,
+            }),
+        };
     }
 
     private void StartVoice()
@@ -951,6 +989,28 @@ public sealed class DesktopCoordinator :
         {
             _profile = _profile with { ProactiveMode = proactiveMode };
         }
+        if (ReadString(payload, "agentProvider") is { } provider
+            && Enum.TryParse<AgentProvider>(provider, out var agentProvider))
+        {
+            var previous = _profile.AgentProvider;
+            _profile = _profile with { AgentProvider = agentProvider };
+            if (previous != agentProvider)
+            {
+                var restarted = await RestartAgentAsync(_lifetime.Token);
+                if (agentProvider == AgentProvider.Cursor)
+                {
+                    await SpeakAsync("Cursor support is coming soon. Coda will keep using Codex until Cursor is ready.");
+                }
+                else if (restarted && agentProvider == AgentProvider.SpaceXAI)
+                {
+                    await SpeakAsync("Switched the coding agent to SpaceXAI.");
+                }
+                else if (restarted)
+                {
+                    await SpeakAsync("Switched the coding agent to Codex.");
+                }
+            }
+        }
         await store.SaveAsync(_profile, _lifetime.Token);
         PostPreferences();
     }
@@ -961,6 +1021,7 @@ public sealed class DesktopCoordinator :
         captionsEnabled = _profile.CaptionsEnabled,
         transcriptRetentionEnabled = _profile.TranscriptRetentionEnabled,
         proactiveMode = _profile.ProactiveMode.ToString(),
+        agentProvider = _profile.AgentProvider.ToString(),
         navigationMode = _profile.NavigationMode.ToString(),
         wakePhrase = _profile.WakePhrase,
     });

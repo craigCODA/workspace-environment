@@ -31,10 +31,18 @@ export type CodaPresenceModel = Readonly<{
   terminalVisible: boolean;
   chatVisible: boolean;
   proactiveMode: ProactiveMode;
+  agentProvider: AgentProvider;
   terminalEvents: readonly string[];
 }>;
 
 export type ProactiveMode = 'CriticalOnly' | 'IncludeCompletion' | 'Quiet' | 'Custom';
+export type AgentProvider = 'Codex' | 'SpaceXAI' | 'Cursor';
+
+export const AGENT_PROVIDERS: readonly AgentProvider[] = Object.freeze([
+  'Codex',
+  'SpaceXAI',
+  'Cursor',
+]);
 
 type CodaPresenceAction =
   | Readonly<{ type: 'state'; state: CodaState }>
@@ -45,6 +53,7 @@ type CodaPresenceAction =
       captionsEnabled?: boolean;
       transcriptVisible?: boolean;
       proactiveMode?: ProactiveMode;
+      agentProvider?: AgentProvider;
     }>
   | Readonly<{ type: 'terminal-events'; events: readonly string[] }>
   | Readonly<{ type: 'terminal-visibility'; visible: boolean }>
@@ -70,6 +79,7 @@ const INITIAL_MODEL: CodaPresenceModel = {
   terminalVisible: false,
   chatVisible: true,
   proactiveMode: 'CriticalOnly',
+  agentProvider: 'Codex',
   terminalEvents: [],
 };
 
@@ -89,6 +99,7 @@ export function reduceCodaPresence(
         captionsEnabled: action.captionsEnabled ?? model.captionsEnabled,
         transcriptVisible: action.transcriptVisible ?? model.transcriptVisible,
         proactiveMode: action.proactiveMode ?? model.proactiveMode,
+        agentProvider: action.agentProvider ?? model.agentProvider,
       };
     case 'terminal-events':
       return { ...model, terminalEvents: action.events.slice(-24) };
@@ -138,6 +149,7 @@ export class CodaPresence {
   readonly #terminalButton: HTMLButtonElement;
   readonly #chatButton: HTMLButtonElement;
   readonly #alertsButton: HTMLButtonElement;
+  readonly #agentProviderButton: HTMLButtonElement;
   readonly #options: CodaPresenceOptions;
   #model = INITIAL_MODEL;
 
@@ -242,6 +254,12 @@ export class CodaPresence {
       this.setPreferences({ proactiveMode });
       this.#options.onPreferenceChange?.({ proactiveMode });
     });
+    this.#agentProviderButton = this.#controlButton(controls, 'Agent', () => {
+      const index = AGENT_PROVIDERS.indexOf(this.#model.agentProvider);
+      const agentProvider = AGENT_PROVIDERS[(index + 1) % AGENT_PROVIDERS.length]!;
+      this.setPreferences({ agentProvider });
+      this.#options.onPreferenceChange?.({ agentProvider });
+    });
 
     this.#element.append(
       beacon,
@@ -271,6 +289,7 @@ export class CodaPresence {
     captionsEnabled?: boolean;
     transcriptVisible?: boolean;
     proactiveMode?: ProactiveMode;
+    agentProvider?: AgentProvider;
   }): void {
     this.#model = reduceCodaPresence(this.#model, { type: 'preferences', ...options });
     this.#render();
@@ -375,6 +394,15 @@ export class CodaPresence {
       : this.#model.proactiveMode === 'IncludeCompletion'
         ? 'Alerts: +done'
         : 'Alerts: quiet';
+    this.#agentProviderButton.setAttribute(
+      'aria-label',
+      `Agent provider: ${this.#model.agentProvider}`,
+    );
+    this.#agentProviderButton.textContent = this.#model.agentProvider === 'Codex'
+      ? 'Agent: Codex'
+      : this.#model.agentProvider === 'SpaceXAI'
+        ? 'Agent: SpaceXAI'
+        : 'Agent: Cursor (soon)';
     this.#terminal.hidden = !this.#model.terminalVisible || this.#model.terminalEvents.length === 0;
     this.#chat.hidden = !this.#model.chatVisible;
     this.#transcript.hidden = !this.#model.transcriptVisible
