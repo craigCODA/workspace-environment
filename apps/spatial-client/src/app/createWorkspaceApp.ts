@@ -27,6 +27,7 @@ import {
   ApplicationSurface,
   ProtocolPresentationSink,
 } from '../surfaces/ApplicationSurface.ts';
+import { SurfaceDockControls } from '../surfaces/SurfaceDockControls.ts';
 import { openDefaultChatGpt } from '../startup/DefaultApplicationStartup.ts';
 import { ChatGptSurfaceSession } from '../startup/ChatGptSurfaceSession.ts';
 
@@ -92,6 +93,13 @@ export function shouldRequestPointerLock(input: {
   surfaceHit: boolean;
 }): boolean {
   return input.primaryButton && !input.interactiveUi && !input.surfaceHit;
+}
+
+export function canEditDurablePresentation(
+  surfaceEntityId: string,
+  isDocked: (entityId: string) => boolean,
+): boolean {
+  return !isDocked(surfaceEntityId);
 }
 
 function payloadRecord(message: WorkspaceNativeEnvelope): Record<string, unknown> {
@@ -187,48 +195,42 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
     },
   });
 
-  const chatGptControls = document.createElement('nav');
-  chatGptControls.className = 'chatgpt-surface-controls';
-  chatGptControls.setAttribute('aria-label', 'ChatGPT surface controls');
-  chatGptControls.hidden = true;
-  const chatGptLabel = document.createElement('span');
-  chatGptLabel.className = 'chatgpt-surface-label';
-  chatGptLabel.textContent = 'ChatGPT';
-  const dockButton = document.createElement('button');
-  dockButton.type = 'button';
-  const collapseButton = document.createElement('button');
-  collapseButton.type = 'button';
-  const focusButton = document.createElement('button');
-  focusButton.type = 'button';
-  focusButton.textContent = 'Focus';
-  chatGptControls.append(chatGptLabel, dockButton, collapseButton, focusButton);
-  root.append(chatGptControls);
-
+  let chatGptControls!: SurfaceDockControls;
   const renderChatGptControls = (): void => {
     const state = chatGptSession.state;
-    chatGptControls.hidden = !state.available;
-    dockButton.textContent = state.docked ? 'Undock' : 'Dock';
-    dockButton.setAttribute('aria-pressed', String(state.docked));
-    collapseButton.textContent = state.collapsed ? 'Show' : 'Collapse';
-    collapseButton.setAttribute('aria-pressed', String(state.collapsed));
-    focusButton.disabled = !state.canFocus;
+    chatGptControls.setVisible(state.available);
+    chatGptControls.setMode(
+      state.collapsed ? 'collapsed' : state.docked ? 'docked' : 'spatial',
+    );
+    chatGptControls.setFocusEnabled(state.canFocus);
   };
 
-  dockButton.addEventListener('click', () => {
-    if (chatGptSession.state.docked) chatGptSession.undock();
-    else chatGptSession.dock();
-    renderChatGptControls();
-  });
-  collapseButton.addEventListener('click', () => {
-    if (chatGptSession.state.collapsed) chatGptSession.show();
-    else chatGptSession.collapse();
-    renderChatGptControls();
-  });
-  focusButton.addEventListener('click', () => {
-    void chatGptSession.focus().catch(() => {
-      coda.setState('needs-attention');
-      coda.showCaption('Windows could not focus the ChatGPT window.');
-    });
+  chatGptControls = new SurfaceDockControls(root, {
+    label: 'ChatGPT',
+    onDock: () => {
+      chatGptSession.dock();
+      renderChatGptControls();
+    },
+    onUndock: () => {
+      chatGptSession.undock();
+      renderChatGptControls();
+    },
+    onCollapse: () => {
+      chatGptSession.collapse();
+      renderChatGptControls();
+    },
+    onShow: () => {
+      chatGptSession.show();
+      renderChatGptControls();
+    },
+    onFocus: async () => {
+      try {
+        await chatGptSession.focus();
+      } catch {
+        coda.setState('needs-attention');
+        coda.showCaption('Windows could not focus the ChatGPT window.');
+      }
+    },
   });
   renderChatGptControls();
 
@@ -368,7 +370,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
 
   const isWorkspaceInteractiveTarget = (target: EventTarget | null): boolean =>
     target instanceof Element
-      && target.closest('.coda-chat, .coda-controls, .coda-terminal, .coda-transcript, .chatgpt-surface-controls') !== null;
+      && target.closest('.coda-chat, .coda-controls, .coda-terminal, .coda-transcript, .surface-dock-controls') !== null;
 
   const clearSurfaceHover = (): void => {
     if (hoveredSurface) {
@@ -417,7 +419,12 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
         ? 'secondary'
         : null;
     const hit = button ? scene.hitTestApplicationSurface(event.clientX, event.clientY) : null;
-    if (hit && button === 'primary' && event.altKey) {
+    if (
+      hit
+      && button === 'primary'
+      && event.altKey
+      && canEditDurablePresentation(hit.entityId, (entityId) => scene.isSurfaceDocked(entityId))
+    ) {
       clearSurfaceHover();
       selectedSurface = hit.surface;
       selectedEntityId = hit.entityId;
@@ -581,7 +588,13 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       return;
     }
     sceneCommands.cancel('manual-keyboard');
-    if (selectedSurface && event.altKey && event.key.startsWith('Arrow')) {
+    if (
+      selectedSurface
+      && selectedEntityId
+      && canEditDurablePresentation(selectedEntityId, (entityId) => scene.isSurfaceDocked(entityId))
+      && event.altKey
+      && event.key.startsWith('Arrow')
+    ) {
       suppressedKeyReleases.reserve(event.key);
       event.preventDefault();
       const current = selectedSurface.displayedPresentation;
@@ -689,6 +702,7 @@ export function createWorkspaceApp(root: HTMLElement): WorkspaceApp {
       for (const unsubscribeMessage of unsubscribeNative) unsubscribeMessage();
       socket.close();
       bridge.destroy();
+      chatGptControls.destroy();
       coda.destroy();
       scene.dispose();
       window.clearTimeout(arrivalTimer);
