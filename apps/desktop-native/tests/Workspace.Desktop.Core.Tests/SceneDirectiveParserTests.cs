@@ -32,6 +32,15 @@ public sealed class SceneDirectiveParserTests
     }
 
     [Fact]
+    public void Agent_prompt_vocabulary_matches_the_parser_allowlist()
+    {
+        Assert.Contains("camera.focus", SceneDirectiveParser.AgentPromptCommandList);
+        Assert.Contains("surface.move", SceneDirectiveParser.AgentPromptCommandList);
+        Assert.Contains("surface.dock", SceneDirectiveParser.AgentPromptCommandList);
+        Assert.Contains("surface.collapse", SceneDirectiveParser.AgentPromptCommandList);
+    }
+
+    [Fact]
     public void Rejects_unknown_scene_actions()
     {
         var result = SceneDirectiveParser.Parse(
