@@ -178,6 +178,7 @@ export class ApplicationSurface {
   readonly #boundWindowId: string | null;
   #presentation: PresentationState | null;
   #displayedPresentation: PresentationState | null;
+  #transientPresentation: PresentationState | null = null;
   #pendingPresentationCount = 0;
   #presentationQueue: Promise<void> = Promise.resolve();
   #opened = false;
@@ -198,9 +199,7 @@ export class ApplicationSurface {
     this.#boundWindowId = options.boundWindowId === undefined ? 'bound' : options.boundWindowId;
     this.#presentation = options.initialPresentation ?? null;
     this.#displayedPresentation = this.#presentation;
-    if (this.#displayedPresentation) {
-      this.#textureTarget.setPresentation?.(this.#displayedPresentation);
-    }
+    this.#applyPresentation();
   }
 
   get presentation(): PresentationState {
@@ -288,9 +287,14 @@ export class ApplicationSurface {
     this.#textureTarget.setCursor?.(u, v);
   }
 
+  setTransientPresentation(presentation: PresentationState | null): void {
+    this.#transientPresentation = presentation;
+    this.#applyPresentation();
+  }
+
   previewPresentation(presentation: PresentationState): void {
     this.#displayedPresentation = presentation;
-    this.#textureTarget.setPresentation?.(presentation);
+    this.#applyPresentation();
   }
 
   acceptAuthoritativePresentation(presentation: PresentationState): void {
@@ -333,6 +337,11 @@ export class ApplicationSurface {
     } finally {
       this.#textureTarget.dispose();
     }
+  }
+
+  #applyPresentation(): void {
+    const presentation = this.#transientPresentation ?? this.#displayedPresentation;
+    if (presentation) this.#textureTarget.setPresentation?.(presentation);
   }
 
   #requireInput(): WindowInputSink {
