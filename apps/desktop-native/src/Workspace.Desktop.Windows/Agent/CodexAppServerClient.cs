@@ -23,7 +23,7 @@ public sealed class CodexAppServerClient : ICodingAgent
     private Task? _readTask;
     private Task? _errorTask;
     private Task? _exitTask;
-    private string? _codexPath;
+    private ResolvedWindowsCommand? _codexCommand;
     private string? _threadId;
     private string? _turnId;
     private long _requestSequence;
@@ -47,28 +47,26 @@ public sealed class CodexAppServerClient : ICodingAgent
             return;
         }
 
-        _codexPath = ResolveCodexExecutable();
-        if (!await IsLoggedInAsync(_codexPath, cancellationToken).ConfigureAwait(false))
+        _codexCommand = WindowsCommandResolver.Resolve("codex");
+        if (!await IsLoggedInAsync(_codexCommand, cancellationToken).ConfigureAwait(false))
         {
             await _events.Writer.WriteAsync(new AgentAuthenticationRequired(
                 "Codex needs your ChatGPT sign-in before Coda can work on the workspace.",
                 DateTimeOffset.UtcNow), cancellationToken).ConfigureAwait(false);
-            await LoginInteractivelyAsync(_codexPath, cancellationToken).ConfigureAwait(false);
-            if (!await IsLoggedInAsync(_codexPath, cancellationToken).ConfigureAwait(false))
+            await LoginInteractivelyAsync(_codexCommand, cancellationToken).ConfigureAwait(false);
+            if (!await IsLoggedInAsync(_codexCommand, cancellationToken).ConfigureAwait(false))
             {
                 throw new InvalidOperationException("Codex is still signed out after login completed.");
             }
         }
 
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = _codexPath,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
+        var startInfo = CreateProcessStartInfo(
+            _codexCommand,
+            useShellExecute: false,
+            redirectStandardInput: true,
+            redirectStandardOutput: true,
+            redirectStandardError: true,
+            createNoWindow: true);
         startInfo.ArgumentList.Add("app-server");
         startInfo.ArgumentList.Add("--stdio");
         _process = Process.Start(startInfo)
@@ -347,17 +345,15 @@ public sealed class CodexAppServerClient : ICodingAgent
     }
 
     private static async Task<bool> IsLoggedInAsync(
-        string codexPath,
+        ResolvedWindowsCommand codexCommand,
         CancellationToken cancellationToken)
     {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = codexPath,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
+        var startInfo = CreateProcessStartInfo(
+            codexCommand,
+            useShellExecute: false,
+            redirectStandardOutput: true,
+            redirectStandardError: true,
+            createNoWindow: true);
         startInfo.ArgumentList.Add("login");
         startInfo.ArgumentList.Add("status");
         using var process = Process.Start(startInfo)
@@ -372,14 +368,10 @@ public sealed class CodexAppServerClient : ICodingAgent
     }
 
     private static async Task LoginInteractivelyAsync(
-        string codexPath,
+        ResolvedWindowsCommand codexCommand,
         CancellationToken cancellationToken)
     {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = codexPath,
-            UseShellExecute = true,
-        };
+        var startInfo = CreateProcessStartInfo(codexCommand, useShellExecute: true);
         startInfo.ArgumentList.Add("login");
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Could not open Codex login.");
@@ -390,19 +382,28 @@ public sealed class CodexAppServerClient : ICodingAgent
         }
     }
 
-    private static string ResolveCodexExecutable()
+    private static ProcessStartInfo CreateProcessStartInfo(
+        ResolvedWindowsCommand command,
+        bool useShellExecute,
+        bool redirectStandardInput = false,
+        bool redirectStandardOutput = false,
+        bool redirectStandardError = false,
+        bool createNoWindow = false)
     {
-        var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        var startInfo = new ProcessStartInfo
         {
-            var candidate = Path.Combine(directory.Trim().Trim('"'), "codex.exe");
-            if (File.Exists(candidate))
-            {
-                return Path.GetFullPath(candidate);
-            }
+            FileName = command.FileName,
+            UseShellExecute = useShellExecute,
+            RedirectStandardInput = redirectStandardInput,
+            RedirectStandardOutput = redirectStandardOutput,
+            RedirectStandardError = redirectStandardError,
+            CreateNoWindow = createNoWindow,
+        };
+        foreach (var prefixArgument in command.PrefixArguments)
+        {
+            startInfo.ArgumentList.Add(prefixArgument);
         }
-        throw new FileNotFoundException(
-            "codex.exe was not found on PATH. Install Codex and sign in with your ChatGPT subscription.");
+        return startInfo;
     }
 
     private (string ThreadId, string TurnId) ActiveTurn() =>
