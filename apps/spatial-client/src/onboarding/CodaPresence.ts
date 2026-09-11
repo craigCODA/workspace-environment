@@ -70,18 +70,20 @@ const STATE_LABELS: Record<CodaState, string> = {
   'mic-off': 'Microphone off',
 };
 
-const INITIAL_MODEL: CodaPresenceModel = {
-  state: 'waiting',
-  caption: '',
-  microphoneEnabled: true,
-  captionsEnabled: true,
-  transcriptVisible: false,
-  terminalVisible: false,
-  chatVisible: true,
-  proactiveMode: 'CriticalOnly',
-  agentProvider: 'Codex',
-  terminalEvents: [],
-};
+export function createInitialCodaPresenceModel(): CodaPresenceModel {
+  return {
+    state: 'waiting',
+    caption: '',
+    microphoneEnabled: true,
+    captionsEnabled: true,
+    transcriptVisible: false,
+    terminalVisible: false,
+    chatVisible: false,
+    proactiveMode: 'CriticalOnly',
+    agentProvider: 'Codex',
+    terminalEvents: [],
+  };
+}
 
 export function reduceCodaPresence(
   model: CodaPresenceModel,
@@ -151,7 +153,7 @@ export class CodaPresence {
   readonly #alertsButton: HTMLButtonElement;
   readonly #agentProviderButton: HTMLButtonElement;
   readonly #options: CodaPresenceOptions;
-  #model = INITIAL_MODEL;
+  #model = createInitialCodaPresenceModel();
 
   constructor(root: HTMLElement, options: CodaPresenceOptions = {}) {
     this.#options = options;
