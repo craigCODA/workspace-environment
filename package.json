@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "postinstall": "node scripts/ensure-electron.mjs",
-    "test": "node --test apps/desktop-shell/test/desktop-shell.test.cjs scripts/desktop-build-command.test.mjs && npm test --workspaces --if-present",
+    "test": "node --test apps/desktop-shell/test/desktop-shell.test.cjs scripts/desktop-build-command.test.mjs scripts/windows-native-artifact.test.mjs && npm test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
     "electron": "npm run build --workspace @workspace/spatial-client && electron .",
