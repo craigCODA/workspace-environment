@@ -3,11 +3,12 @@ import test from 'node:test';
 import { openDefaultChatGpt } from './DefaultApplicationStartup.ts';
 
 class FakeHandler {
-  readonly requests: unknown[] = [];
+  readonly requests: unknown[];
   readonly responses: unknown[];
 
   constructor(...responses: unknown[]) {
-    this.responses.push(...responses);
+    this.requests = [];
+    this.responses = [...responses];
   }
 
   async handle(value: unknown): Promise<any> {
