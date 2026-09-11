@@ -8,5 +8,6 @@ test('windows CI publishes a native Coda artifact separately from Electron fallb
   assert.match(workflow, /Stage native Windows bundle/);
   assert.match(workflow, /workspace-environment-native-coda/);
   assert.match(workflow, /\.native-package/);
+  assert.match(workflow, /include-hidden-files:\s*true/);
   assert.match(workflow, /workspace-environment-electron-fallback/);
 });
