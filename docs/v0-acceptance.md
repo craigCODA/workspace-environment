@@ -144,6 +144,22 @@ Verify these behaviors on an interactive Windows desktop:
 4. On a Windows machine where ChatGPT is not installed or where the `ChatGPT` application search is not uniquely resolved, Workspace Environment still reaches its normal ready state and remains usable. No guessed application is launched.
 5. A ChatGPT-specific search/open failure does not put Coda into the host-disconnected state; only failure of the underlying Workspace Host connection uses that health path.
 
+## ChatGPT presentation-mode acceptance
+
+Automated Windows CI for the presentation-mode implementation passed on commit `aea3dc6b88c797d7e0ce5c60f8f65596510f9e64`, including TypeScript tests/typecheck, Windows-host tests, native Coda tests, native Windows preview build, NSIS installer build, and installer artifact upload.
+
+Verify these behaviors on an interactive Windows desktop before recording human acceptance:
+
+1. Start Workspace Environment with ChatGPT available. The one resolved ChatGPT surface starts docked at the right side of the view.
+2. Click **Undock**. The same live ChatGPT surface returns to its durable world position without launching another ChatGPT process or window.
+3. Move the undocked ChatGPT surface, Dock it, then Undock it again. The moved durable position and size return exactly; camera-local dock coordinates are never persisted.
+4. Click **Collapse**, then **Show**. Only renderer visibility changes; ChatGPT remains the same real window and returns in the presentation mode it had before collapse.
+5. Click **Focus**. Workspace activates the same semantic `pc.window` through the typed `window.focus` operation.
+6. Pointer, wheel, key, and text input continue to route to the same ChatGPT window in both docked and spatial modes.
+7. While ChatGPT is docked, Alt-drag and Alt-arrow placement editing do not write camera-local coordinates into durable presentation state.
+8. Issue typed `surface.dock` and `surface.collapse` scene directives. The renderer state changes through the same generic scene primitives used by the control strip, and the ChatGPT controls remain synchronized with scene authority.
+9. Restart Workspace Environment after moving ChatGPT in spatial mode. Its durable spatial presentation survives restart and is restored when the surface is undocked.
+
 ## V0 boundaries
 
 V0 is deliberately narrow:
